@@ -1,4 +1,4 @@
-require "ansi"
+require_relative "ansi"
 
 def info(*msg)
     puts "#{Ansi.green "[INFO]"} #{msg.join(" ")}"

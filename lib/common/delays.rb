@@ -1,4 +1,4 @@
-require "logging"
+require_relative "logging"
 
 def wait_range(min, max)
     min = min.to_i if min.is_a? String

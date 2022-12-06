@@ -1,4 +1,4 @@
-require "logging"
+require_relative "logging"
 
 module GitHub
     extend self

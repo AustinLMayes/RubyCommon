@@ -1,4 +1,4 @@
-require "apple_script"
+require_relative "apple_script"
 
 module Slack
     extend self
