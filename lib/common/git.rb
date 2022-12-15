@@ -106,4 +106,9 @@ module Git
       end
       count
     end
+
+    def commit(msg)
+      `git add .`
+      `g c -am \"#{msg}\"`
+    end
   end
