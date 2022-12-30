@@ -87,6 +87,22 @@ module Git
     def commits_after(date)
       `git log --reverse --since="#{date}" --pretty="%H" origin/#{current_branch}..#{current_branch}`.split("\n")
     end
+
+    # [{sha: "123", date: Ruby Date}}]
+    def commits_after_with_date(date)
+      `git log --reverse --since="#{date}" --pretty="%H %aD" origin/#{current_branch}..#{current_branch}`.split("\n").map do |line|
+        sha, date = line.split(' ')
+        {sha: sha, date: DateTime.parse(date)}
+      end
+    end
+
+    def commits_after_last_push
+      commits_after last_pushed_date
+    end
+
+    def commits_after_last_push_with_date
+      commits_after_with_date last_pushed_date
+    end
   
     def last_pushed_date
       DateTime.parse(`git log --pretty="%aD" origin/#{current_branch} | head -n1`.strip)
