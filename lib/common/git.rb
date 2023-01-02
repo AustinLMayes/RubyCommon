@@ -7,6 +7,14 @@ module Git
       error "Repo not found at path #{where}!" unless File.exists? where
       error "#{where} is not a Git directory!" unless File.exists? "#{where}/.git"
     end
+
+    def is_repo?(where)
+      File.exists? where and File.exists? "#{where}/.git"
+    end
+
+    def branch_is_on_remote?(branch)
+      `git branch -r`.split("\n").include? "  origin/#{branch}"
+    end
   
     def checkout_branch(branch)
       system "git", "checkout", branch
@@ -93,14 +101,16 @@ module Git
     end
   
     def commits_after(date)
+      error "Branch must be pushed to get accurate dates" unless branch_is_on_remote? current_branch
       `git log --reverse --since="#{date}" --pretty="%H" origin/#{current_branch}..#{current_branch}`.split("\n")
     end
 
-    # [{sha: "123", date: Ruby Date}}]
+    # [{sha: "123", date: Ruby Date, message: "message"}]
     def commits_after_with_date(date)
-      `git log --reverse --since="#{date}" --pretty="%H %aD" origin/#{current_branch}..#{current_branch}`.split("\n").map do |line|
-        sha, date = line.split(' ')
-        {sha: sha, date: DateTime.parse(date)}
+      error "Branch must be pushed to get accurate dates" unless branch_is_on_remote? current_branch
+      `git log --reverse --since="#{date}" --pretty="%H||%aD||%s" origin/#{current_branch}..#{current_branch}`.split("\n").map do |line|
+        sha, date, message = line.split("||")
+        {sha: sha, date: DateTime.parse(date), message: message}
       end
     end
 
@@ -114,6 +124,10 @@ module Git
   
     def last_pushed_date
       DateTime.parse(`git log --pretty="%aD" origin/#{current_branch} | head -n1`.strip)
+    end
+
+    def has_unpushed_commits?
+      `git status`.include? "Your branch is ahead of"
     end
   
     def lines_changed(sha)
@@ -131,8 +145,19 @@ module Git
       count
     end
 
+    def uncommitted_lines
+      `git diff --numstat`.split("\n").map do |line|
+        line.split(' ').first.to_i
+      end.sum
+    end
+
     def commit(msg)
       `git add .`
       `g c -am \"#{msg}\"`
+    end
+
+    # True if push was successful and new commits were pushed
+    def push
+      `git push --porcelain`.include? ".."
     end
   end
