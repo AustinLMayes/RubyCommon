@@ -95,6 +95,21 @@ module Git
     def branch_exists(branch)
       system "git rev-parse --verify #{branch}"
     end
+
+    # Only switch if there are no uncommitted changes
+    def safe_checkout(*branches)
+      return if branches.include? current_branch
+      return if has_uncommitted_changes?
+      return if has_unpushed_commits?
+      branches.each do |branch|
+        if branch_exists branch
+          info "Switching to #{branch}"
+          system "git checkout #{branch}"
+          return
+        end
+      end
+      warning "No branches found for #{Dir.pwd}! Tried #{branches.join(", ")}"
+    end
   
     def nth_commit_sha(offset)
       `git log --reverse -n#{offset} --pretty="%H" | head -n1`.strip
@@ -151,9 +166,25 @@ module Git
       end.sum
     end
 
+    def has_uncommitted_changes?
+      uncommitted_lines > 0
+    end
+
     def commit(msg)
       `git add .`
-      `g c -am \"#{msg}\"`
+      `git c -am \"#{msg}\"`
+    end
+
+    def random_commit(*message_variants)
+      message = message_variants.sample
+      message = message.downcase if rand(5) == 0
+      message = message.split(" ").map(&:capitalize).join(" ") if rand(8) == 0
+      built = ""
+      message.split(" ").each do |word|
+        built += word
+        built += " " unless rand(12) == 0
+      end
+      commit built
     end
 
     # True if push was successful and new commits were pushed
