@@ -24,13 +24,6 @@ def root_branches
 end
 
 def base_branches
-  branches = ["gamedevnet", "gamedevnet-mco", "main", "dev"]
-  %w(master production).each do |branch|
-    branches << branch
-    branches << branch + "-mco"
-    branches << branch + "-gameframework"
-    branches << branch + "-gameframework-mco"
-    branches << branch + "-1.19"
-  end
+  branches = ["main", "dev", "production", "master", "master-1.19"]
   branches
 end
