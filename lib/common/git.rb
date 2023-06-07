@@ -179,6 +179,10 @@ module Git
       uncommitted_lines > 0
     end
 
+    def last_commit_message
+      `git log -1 --pretty=%B`.strip.split("\n").first
+    end
+
     def commit(msg)
       `git add .`
       `git c -am \"#{msg}\"`
