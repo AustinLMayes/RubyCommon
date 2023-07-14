@@ -11,11 +11,7 @@ def fix_path(path)
 end
 
 def root_branches
-  gamedev = Dir.pwd.include? "Gamedev"
-  one_ninteen = Dir.pwd.include? "1.19"
   branches = []
-  branches << "production-gameframework" if gamedev
-  branches << "master-1.19" if one_ninteen
   branches << "production"
   branches << "main"
   branches << "master"
@@ -24,6 +20,6 @@ def root_branches
 end
 
 def base_branches
-  branches = ["main", "dev", "production", "master", "master-1.19"]
+  branches = ["main", "dev", "production", "master", "staging"]
   branches
 end
