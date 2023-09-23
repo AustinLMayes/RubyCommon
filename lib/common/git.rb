@@ -6,8 +6,8 @@ module Git
     def branch_for_comparison
       branch = current_branch
       unless branch_is_on_remote? branch
-        branch = "HEAD" 
-        info "[#{repo_name}] Not on a branch that exists on the remote, using HEAD"
+        branch = "production" 
+        info "[#{repo_name}] Not on a branch that exists on the remote, using production"
       end
       branch
     end
@@ -125,13 +125,13 @@ module Git
     end
   
     def commits_after(date)
-      error "Branch must be pushed to get accurate dates" unless branch_is_on_remote? current_branch
+      warn "Branch must be pushed to get accurate dates" unless branch_is_on_remote? current_branch
       `git log --reverse --since="#{date}" --pretty="%H" origin/#{branch_for_comparison}..#{current_branch}`.split("\n")
     end
 
     # [{sha: "123", date: Ruby Date, message: "message"}]
     def commits_after_with_date(date)
-      error "Branch must be pushed to get accurate dates" unless branch_is_on_remote? current_branch
+      warn "Branch must be pushed to get accurate dates" unless branch_is_on_remote? current_branch
       `git log --reverse --since="#{date}" --pretty="%H||%aD||%s" origin/#{branch_for_comparison}..#{current_branch}`.split("\n").map do |line|
         sha, date, message = line.split("||")
         {sha: sha, date: DateTime.parse(date), message: message}
