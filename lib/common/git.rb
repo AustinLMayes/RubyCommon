@@ -4,11 +4,11 @@ module Git
     extend self
   
     def branch_for_comparison
-      branch = current_branch
-      unless branch_is_on_remote? branch
-        branch = "production" 
-        info "[#{repo_name}] Not on a branch that exists on the remote, using production"
+      branch = "origin/" + current_branch
+      unless branch_is_on_remote? current_branch
+        branch = "production"
       end
+      puts "Using branch #{branch} for comparison"
       branch
     end
 
@@ -126,13 +126,13 @@ module Git
   
     def commits_after(date)
       warn "Branch must be pushed to get accurate dates" unless branch_is_on_remote? current_branch
-      `git log --reverse --since="#{date}" --pretty="%H" origin/#{branch_for_comparison}..#{current_branch}`.split("\n")
+      `git log --reverse --since="#{date}" --pretty="%H" #{branch_for_comparison}..#{current_branch}`.split("\n")
     end
 
     # [{sha: "123", date: Ruby Date, message: "message"}]
     def commits_after_with_date(date)
       warn "Branch must be pushed to get accurate dates" unless branch_is_on_remote? current_branch
-      `git log --reverse --since="#{date}" --pretty="%H||%aD||%s" origin/#{branch_for_comparison}..#{current_branch}`.split("\n").map do |line|
+      `git log --reverse --since="#{date}" --pretty="%H||%aD||%s" #{branch_for_comparison}..#{current_branch}`.split("\n").map do |line|
         sha, date, message = line.split("||")
         {sha: sha, date: DateTime.parse(date), message: message}
       end
@@ -147,7 +147,7 @@ module Git
     end
   
     def last_pushed_date
-      DateTime.parse(`git log --pretty="%aD" origin/#{branch_for_comparison} | head -n1`.strip).localtime
+      DateTime.parse(`git log --pretty="%aD" #{branch_for_comparison} | head -n1`.strip).localtime
     end
 
     def has_unpushed_commits?
