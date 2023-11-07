@@ -41,6 +41,17 @@ module GitHub
         page += 1
         break if seen_before
       end
+      page = 1
+      seen_before = false
+      while true
+        puts "Getting page #{page}..."
+        prs += client.pull_requests(repo, sort: 'created', direction: 'desc', page: page).select do |pr|
+          seen_before = true if pr.created_at < start
+          pr.user.login == GITHUB_USERNAME
+        end
+        page += 1
+        break if seen_before
+      end
       return prs
     end
 
