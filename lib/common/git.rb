@@ -204,4 +204,12 @@ module Git
     def push
       `git push --porcelain`.include? ".."
     end
+
+    def find_branches(pattern)
+      `git branch -a`.split("\n").select do |line|
+        line.include?(pattern) && !line.include?("remotes")
+      end.map do |line|
+        line.gsub("*", "").gsub("\n", "").strip
+      end
+    end
   end
