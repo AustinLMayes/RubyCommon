@@ -2,11 +2,18 @@
 module MSSQL
     extend self
 
-    def data_replace_script(client, to_export, db_name)
+    def data_replace_script(client, to_export, db_name, sequences: [])
         script = ["USE #{db_name}"]
     
         to_export.each do |table|
             script << "DELETE FROM #{table}"
+        end
+
+        # Set sequences values
+        sequences.each do |seq|
+            client.execute("USE #{db_name} SELECT CAST(current_value as int) as current_value FROM sys.sequences WHERE name = '#{seq}'").each do |row|
+                script << "ALTER SEQUENCE #{seq} RESTART WITH #{row['current_value'] + 1}"
+            end
         end
     
         # Add all data
@@ -43,6 +50,7 @@ module MSSQL
                 script << "INSERT INTO #{table} VALUES (#{vals.join(', ')})"
             end
         end
+
         script.join("\n")
     end
 end
