@@ -157,6 +157,7 @@ module Git
     def lines_changed(sha)
       out = `git show #{sha} --oneline --numstat`.strip
       count = 0
+      return count if out.blank? || out.include?("fatal: bad object")
       out.split("\n")[1..-1].each do |l|
         l.split(' ').each do |part|
           begin
