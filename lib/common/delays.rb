@@ -1,10 +1,11 @@
 require_relative "logging"
 
-def wait_range(min, max)
+def wait_range(min, max = min)
     min = min.to_i if min.is_a? String
     max = max.to_i if max.is_a? String
   
     return if max < 1
+    return unless $delays_enabled
     min *= 2 if $extra_slow
     max *= 2 if $extra_slow
   
