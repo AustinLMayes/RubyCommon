@@ -145,6 +145,17 @@ module Git
     def commits_after_last_push_with_date
       commits_after_with_date last_pushed_date
     end
+
+    def my_commits_after_with_date(date, author)
+      commits = `git log --reverse --since="#{date}" --pretty="%H||%aD||%s" #{branch_for_comparison}..#{current_branch}`.split("\n").map do |line|
+        sha, date, message = line.split("||")
+        {sha: sha, date: DateTime.parse(date), message: message}
+      end
+      commits.select do |commit|
+        commit[:message].include? author
+      end
+      commits
+    end
   
     def last_pushed_date
       DateTime.parse(`git log --pretty="%aD" #{branch_for_comparison} | head -n1`.strip).localtime
@@ -207,10 +218,21 @@ module Git
     end
 
     def find_branches(pattern)
+      puts "Looking for branches matching #{pattern}..."
       `git branch -a`.split("\n").select do |line|
         line.include?(pattern) && !line.include?("remotes")
       end.map do |line|
         line.gsub("*", "").gsub("\n", "").strip
       end
+    end
+
+    def find_branches_multi(*names)
+      names.map do |name|
+        if name.is_a? String
+          find_branches name
+        elsif name.is_a? Array
+          find_branches_multi *name
+        end
+      end.flatten.uniq
     end
   end
