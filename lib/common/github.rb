@@ -69,9 +69,9 @@ module GitHub
       commits
     end
 
-    def lines_changed_in_commit(repo, commit)
+    def lines_changed_in_commit(repo, sha)
       client = get_client
-      files = client.commit(repo, commit.sha).files
+      files = client.commit(repo, sha).files
       files.sum(&:changes)
     end
   end
