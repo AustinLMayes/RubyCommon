@@ -73,6 +73,10 @@ module Discord::Emoji
         ":exclamation:"
     end
 
+    def eyes(shaking = false)
+        ":eyes:" # TODO - no shaking emoji
+    end
+
     def arrow(direction)
         case direction
         when :up
@@ -93,7 +97,7 @@ module Discord::Emoji
         ":clock#{hour}#{minute}:"
     end
 
-    def heart(color: :red)
+    def heart(color = :red)
         case color
         when :pink
             ":pink_heart:"
@@ -124,7 +128,7 @@ module Discord::Emoji
         end
     end
 
-    def circle(color: :red)
+    def circle(color = :red)
         case color
         when :red
             ":red_circle:"
@@ -151,7 +155,7 @@ module Discord::Emoji
         end
     end
 
-    def square(color: :red)
+    def square(color = :red)
         case color
         when :red
             ":red_square:"
@@ -237,7 +241,7 @@ module Discord::Emoji
         end
     end
 
-    def chat(dot: false)
+    def chat(dot = false)
         if dot
             ":speech_balloon:"
         else
@@ -261,7 +265,7 @@ module Discord::Emoji
         ":shield:"
     end
 
-    def graph(direction)
+    def graph(direction = :up)
         case direction
         when :up
             ":chart_with_upwards_trend:"
@@ -277,7 +281,7 @@ module Discord::Emoji
     module CubeCraft
         extend self
 
-        def cube(dark: false)
+        def cube(dark = false)
             if dark
                 ":cube_dark:"
             else
@@ -285,7 +289,7 @@ module Discord::Emoji
             end
         end
 
-        def swish(dark: false)
+        def swish(dark = false)
             if dark
                 ":cube_swish_dark:"
             else
@@ -293,7 +297,7 @@ module Discord::Emoji
             end
         end
 
-        def ziax(dark: false)
+        def ziax(dark = false)
             if dark
                 ":ziax_dark:"
             else
@@ -301,7 +305,7 @@ module Discord::Emoji
             end
         end
 
-        def emotion(emotion: :blush)
+        def emotion(emotion = :blush)
             case emotion
             when :annoyed
                 ":cube_annoyed:"
