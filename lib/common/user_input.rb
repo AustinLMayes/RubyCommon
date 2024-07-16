@@ -10,7 +10,7 @@ module UserInput
             puts "#{index + 1}. #{option}"
         end
         print '> '
-        input = gets.chomp
+        input = STDIN.gets.chomp
         if options.any?
             loop do
                 if input.to_i.between?(1, options.length)
@@ -38,7 +38,7 @@ module UserInput
         puts Ansi.green(prompt)
         loop do
             print '> '
-            input = gets.chomp
+            input = STDIN.gets.chomp
             if input.match?(/\A\d+\z/)
                 return input.to_i
             else
@@ -51,7 +51,7 @@ module UserInput
         puts Ansi.green(prompt)
         loop do
             print '> '
-            input = gets.chomp
+            input = STDIN.gets.chomp
             if input.match?(/\A-?\d+\z/)
                 return input.to_i
             else
@@ -64,7 +64,7 @@ module UserInput
         puts Ansi.green(prompt)
         loop do
             print '> '
-            input = gets.chomp
+            input = STDIN.gets.chomp
             if input.match?(/\A-?\d+(\.\d+)?\z/)
                 return input.to_f
             else
