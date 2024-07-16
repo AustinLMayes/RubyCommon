@@ -2,23 +2,23 @@ module Discord::Markdown
     extend self
 
     def bold(text)
-        "**#{text}**"
+        text.split("\n").map { |line| "**#{line}**" }.join("\n")
     end
 
     def italic(text)
-        "*#{text}*"
+        text.split("\n").map { |line| "*#{line}*" }.join("\n")
     end
 
     def underline(text)
-        "__#{text}__"
+        text.split("\n").map { |line| "__#{line}__" }.join("\n")
     end
 
     def strikethrough(text)
-        "~~#{text}~~"
+        text.split("\n").map { |line| "~~#{line}~~" }.join("\n")
     end
 
     def code(text)
-        "`#{text}`"
+       text.split("\n").map { |line| "`#{line}`" }.join("\n")
     end
 
     def code_block(text, lang: "")
@@ -26,7 +26,7 @@ module Discord::Markdown
     end
 
     def quote(text)
-        "> #{text}"
+        text.split("\n").map { |line| "> #{line}" }.join("\n")
     end
 
     def spoiler(text)
@@ -40,23 +40,23 @@ module Discord::Markdown
     end
 
     def h1(text)
-        "# #{text}"
+        text.split("\n").map { |line| "# #{line}" }.join("\n")
     end
 
     def h2(text)
-        "## #{text}"
+        text.split("\n").map { |line| "## #{line}" }.join("\n")
     end
 
     def h3(text)
-        "### #{text}"
+        text.split("\n").map { |line| "### #{line}" }.join("\n")
     end
 
     def subtext(text)
-        "-# #{text}"
+        text.split("\n").map { |line| "-# #{line}" }.join("\n")
     end
     
     def list_item(text)
-        "- #{text}"
+        text.split("\n").map { |line| "- #{line}" }.join("\n")
     end
 
     def mention(user_id)
