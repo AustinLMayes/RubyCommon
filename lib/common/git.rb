@@ -64,10 +64,14 @@ module Git
       end
     end
   
-    def push_branches(*branches, ensure_exists: true, delay: [0, 0])
+    def push_branches(*branches, ensure_exists: true, delay: [0, 0], force: false)
       act_on_branches *branches, ensure_exists: ensure_exists, delay: delay do |branch|
         info "Pushing #{branch}"
-        system "git", "pu"
+        if force
+          system "git", "pu", "--force"
+        else
+          system "git", "pu"
+        end
       end
     end
   
