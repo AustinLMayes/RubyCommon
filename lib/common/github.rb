@@ -5,7 +5,7 @@ require 'octokit'
 module GitHub
     extend self
 
-    GITHUB_USERNAME = "AustinLMayes"
+    GITHUB_USERNAME = exec "git config user.name"
   
     def make_pr(title, body: " ", base: nil, suffix: "")
       base = "production" unless base
