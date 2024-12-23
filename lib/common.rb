@@ -1,5 +1,5 @@
 # Load all for convenience
-Dir[File.dirname(__dir__) + '/lib/common/*.rb'].each do |file| 
+Dir[File.dirname(__dir__) + '/lib/common/*.rb'].each do |file|
   require "common/" + File.basename(file, File.extname(file))
 end
 

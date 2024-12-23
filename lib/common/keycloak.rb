@@ -12,7 +12,7 @@ class Keycloak
   end
 
   def get_bearer_from_user_pass(username, password)
-    response = Net::HTTP.post_form(URI.parse("#{url}/auth/realms/#{realm}/protocol/openid-connect/token"), {
+    response = Net::HTTP.post_form(URI.parse("#{url}/realms/#{realm}/protocol/openid-connect/token"), {
       "client_id" => client_id,
       "client_secret" => client_secret,
       "grant_type" => "password",
@@ -28,7 +28,7 @@ class Keycloak
   end
 
   def get_bearer_from_client_credentials
-    response = Net::HTTP.post_form(URI.parse("#{url}/auth/realms/#{realm}/protocol/openid-connect/token"), {
+    response = Net::HTTP.post_form(URI.parse("#{url}/realms/#{realm}/protocol/openid-connect/token"), {
       "client_id" => client_id,
       "client_secret" => client_secret,
       "grant_type" => "client_credentials"
@@ -37,9 +37,10 @@ class Keycloak
     if response.code == "200"
       res = JSON.parse(response.body)
       error "Token type is #{res["token_type"]}" if res["token_type"] != "Bearer"
-      res["access_token"]
+      # token and expiry
+      [res["access_token"], Time.now + res["expires_in"]]
     else
-      raise "Failed to get access token: #{response.code} #{response.body}"
+      raise "Failed to get access token from URL #{url}/auth/realms/#{realm}/protocol/openid-connect/token: #{response.code} #{response.body}"
     end
   end
 end

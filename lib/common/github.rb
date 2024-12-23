@@ -5,7 +5,7 @@ require 'octokit'
 module GitHub
     extend self
 
-    GITHUB_USERNAME = exec "git config user.name"
+    GITHUB_USERNAME = `gh api user | jq -r .login`.strip
   
     def make_pr(title, body: " ", base: nil, suffix: "")
       base = "production" unless base
@@ -31,28 +31,34 @@ module GitHub
       client = get_client
       prs = []
       seen_before = false
+      seen_any = false
       page = 1
       while true
         puts "Getting page #{page}..."
         prs += client.pull_requests(repo, state: 'closed', sort: 'created', direction: 'desc', page: page).select do |pr|
           seen_before = true if pr.created_at < start
+          seen_any = true
           pr.user.login == GITHUB_USERNAME
         end
         page += 1
         break if seen_before
+        break unless seen_any
       end
       page = 1
       seen_before = false
+      seen_any = false
       while true
         puts "Getting page #{page}..."
         in_range = client.pull_requests(repo, sort: 'created', direction: 'desc', page: page)
         break if in_range.empty?
         prs += in_range.select do |pr|
           seen_before = true if pr.created_at < start
+          seen_any = true
           pr.user.login == GITHUB_USERNAME
         end
         page += 1
         break if seen_before
+        break unless seen_any
       end
       return prs
     end
