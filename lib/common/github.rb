@@ -29,36 +29,13 @@ module GitHub
 
     def prs_in_time_range(repo, start, e = Time.now)
       client = get_client
+      client.auto_paginate = true
       prs = []
-      seen_before = false
-      seen_any = false
-      page = 1
-      while true
-        puts "Getting page #{page}..."
-        prs += client.pull_requests(repo, state: 'closed', sort: 'created', direction: 'desc', page: page).select do |pr|
-          seen_before = true if pr.created_at < start
-          seen_any = true
-          pr.user.login == GITHUB_USERNAME
-        end
-        page += 1
-        break if seen_before
-        break unless seen_any
+      prs += client.pull_requests(repo, state: 'closed', sort: 'created', direction: 'desc').select do |pr|
+        pr.user.login == GITHUB_USERNAME && pr.closed_at >= start && pr.closed_at <= e
       end
-      page = 1
-      seen_before = false
-      seen_any = false
-      while true
-        puts "Getting page #{page}..."
-        in_range = client.pull_requests(repo, sort: 'created', direction: 'desc', page: page)
-        break if in_range.empty?
-        prs += in_range.select do |pr|
-          seen_before = true if pr.created_at < start
-          seen_any = true
-          pr.user.login == GITHUB_USERNAME
-        end
-        page += 1
-        break if seen_before
-        break unless seen_any
+      prs += client.pull_requests(repo, sort: 'created', direction: 'desc').select do |pr|
+        pr.user.login == GITHUB_USERNAME && pr.created_at >= start && pr.created_at <= e
       end
       return prs
     end
