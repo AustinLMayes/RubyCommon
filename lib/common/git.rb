@@ -239,4 +239,34 @@ module Git
         end
       end.flatten.uniq
     end
-  end
+
+    PATCHES_PATH = ENV["HOME"] + "/git-utils/patches"
+
+    def create_patches(branch: Git.current_branch, base: "production", prefix: nil, path: nil)
+      info "Creating patches for #{base}..#{branch}"
+      FileUtils.mkdir_p PATCHES_PATH
+      patches_path = PATCHES_PATH + "/" + File.basename(Dir.pwd) + "/" + (path.nil? ? branch : path)
+      info "Saving patches to #{patches_path}"
+      if prefix
+        FileUtils.rm Dir.glob(patches_path + "/#{prefix}*.patch")
+        patches_path += "/tmp"
+      else
+        FileUtils.rm_rf patches_path
+      end
+      FileUtils.mkdir_p patches_path
+      system "git", "format-patch", "--diff-algorithm=myers", "--zero-commit", "--full-index", "--no-signature", "--no-stat", "-N", "-o", patches_path, "#{base}..#{branch}"
+      if prefix
+        Dir.glob(patches_path + "/*.patch").each do |file|
+          FileUtils.mv file, patches_path + "/../" + prefix + "-" + File.basename(file)
+        end
+        FileUtils.rm_rf patches_path
+      end
+    end
+
+    def apply_patches(path: Git.current_branch, prefix: "", interactive: false)
+      patches_path = PATCHES_PATH + "/" + File.basename(Dir.pwd) + "/" + path
+      error "No patches found in #{patches_path}" unless Dir.exist?(patches_path)
+      error "No patches found in #{patches_path}" if Dir.empty?(patches_path)
+      system "git am --3way --ignore-whitespace #{Dir.glob(patches_path + "/#{prefix}*.patch").join(" ")} #{interactive ? "-i" : ""}"
+    end
+end
