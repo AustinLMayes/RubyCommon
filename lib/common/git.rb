@@ -267,6 +267,8 @@ module Git
       patches_path = PATCHES_PATH + "/" + File.basename(Dir.pwd) + "/" + path
       error "No patches found in #{patches_path}" unless Dir.exist?(patches_path)
       error "No patches found in #{patches_path}" if Dir.empty?(patches_path)
+      error "No patches found with prefix #{prefix}" if Dir.glob(patches_path + "/#{prefix}*.patch").empty?
       system "git am --3way --ignore-whitespace #{Dir.glob(patches_path + "/#{prefix}*.patch").join(" ")} #{interactive ? "-i" : ""}"
+      error "Failed to apply patches" unless $?.success?
     end
 end
