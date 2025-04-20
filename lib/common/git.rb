@@ -129,13 +129,13 @@ module Git
     end
   
     def commits_after(date)
-      warn "Branch must be pushed to get accurate dates" unless branch_is_on_remote? current_branch
+      warning "Branch must be pushed to get accurate dates" unless branch_is_on_remote? current_branch
       `git log --reverse --since="#{date}" --pretty="%H" #{branch_for_comparison}..#{current_branch}`.split("\n")
     end
 
     # [{sha: "123", date: Ruby Date, message: "message"}]
     def commits_after_with_date(date)
-      warn "Branch must be pushed to get accurate dates" unless branch_is_on_remote? current_branch
+      warning "Branch must be pushed to get accurate dates" unless branch_is_on_remote? current_branch
       `git log --reverse --since="#{date}" --pretty="%H||%aD||%s" #{branch_for_comparison}..#{current_branch}`.split("\n").map do |line|
         sha, date, message = line.split("||")
         {sha: sha, date: DateTime.parse(date), message: message}
