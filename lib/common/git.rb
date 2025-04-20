@@ -160,6 +160,11 @@ module Git
       end
       commits
     end
+
+    def last_n_commits(n)
+      commits = `git log --reverse -n#{n} --pretty="%H" #{current_branch}`.split("\n")
+      commits.reverse
+    end
   
     def last_pushed_date
       DateTime.parse(`git log --pretty="%aD" #{branch_for_comparison} | head -n1`.strip).localtime
