@@ -47,6 +47,10 @@ module Git
     def ensure_branch(branch)
       error "Not on expected branch #{branch}! On #{current_branch}" if current_branch.downcase != branch.downcase
     end
+
+    def ensure_clean
+      error "Uncommitted changes detected!" if has_uncommitted_changes?
+    end
   
     def delete_branches(*branches, remote: true)
       info "Deleting #{branches.join(" ")}..."
@@ -275,5 +279,18 @@ module Git
       error "No patches found with prefix #{prefix}" if Dir.glob(patches_path + "/#{prefix}*.patch").empty?
       system "git am --3way --ignore-whitespace #{Dir.glob(patches_path + "/#{prefix}*.patch").join(" ")} #{interactive ? "-i" : ""}"
       error "Failed to apply patches" unless $?.success?
+    end
+
+    def commits_between(branch1, branch2)
+      `git log --no-merges --reverse --pretty="%H" #{branch1}..#{branch2}`.split("\n")
+    end
+
+    def my_commits_between(branch1, branch2, author)
+      commits = commits_between branch1, branch2
+      commits.select do |commit|
+        message = `git log --format=%B -n 1 #{commit}`.strip.split("\n").first
+        message.include? author
+      end
+      commits
     end
 end
