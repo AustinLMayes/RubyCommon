@@ -73,7 +73,7 @@ class IRCSession
     end
 
     def send_message(channel, msg)
-        temp_join = !@channels.include?(channel)
+        temp_join = !@channels.include?(channel) && channel.start_with?("#")
         join channel if temp_join
         send "PRIVMSG #{channel} :#{msg}"
         part channel if temp_join
