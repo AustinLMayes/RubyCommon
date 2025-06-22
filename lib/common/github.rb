@@ -7,10 +7,70 @@ module GitHub
 
     GITHUB_USERNAME = `gh api user | jq -r .login`.strip
   
-    def make_pr(title, body: " ", base: nil, suffix: "")
+    def make_pr(title, body: " ", base: nil, suffix: "", head: nil)
       base = "production" unless base
       info "Making PR based off of #{base} with title \"#{title} #{suffix}\" and body \"#{body}\""
-      `gh pr create --title "#{title} #{suffix}" --body "#{body}" --base #{base}`
+      res = system "gh", "pr", "create", "--title", "#{title} #{suffix}", "--body", body, "--base", base, "--head", head == nil ? Git.current_branch : head
+      error "Failed to create PR" unless res
+      get_pr_number(head == nil ? Git.current_branch : head)
+    end
+
+    def change_pr_base(branch, base)
+      previous_base = get_pr_base(branch)
+      if previous_base == base
+        info "PR base already set to #{base} for #{branch}"
+        return
+      end
+      info "Changing PR base to #{base} for #{branch}"
+      # system "gh" "pr", "edit", branch, "--base", base
+      `gh pr edit #{branch} --base #{base}`
+    end
+
+    def change_pr_title(branch, title)
+      previous_title = get_pr_title(branch)
+      if previous_title == title
+        info "PR title already set to #{title} for #{branch}"
+        return
+      end
+      info "Changing PR title to #{title}"
+      res = system "gh", "pr", "edit", branch, "--title", title
+      error "Failed to change PR title" unless res
+    end
+
+    def get_pr_title(branch)
+      title = `gh pr view #{branch} --json title --jq '.title'`
+      if title.empty?
+        nil
+      else
+        title.strip
+      end
+    end
+
+    def get_pr_base(branch)
+      base = `gh pr view #{branch} --json baseRefName --jq '.baseRefName'`
+      if base.empty?
+        nil
+      else
+        base.strip
+      end
+    end
+
+    def get_pr_number(branch, only_mine: true)
+      author_filter = only_mine ? "-A #{GITHUB_USERNAME}" : ""
+      pr = `gh pr list #{author_filter} --json number,headRefName --jq '.[] | select(.headRefName == "#{branch}") | .number'`
+      if pr.empty?
+        nil
+      else
+        pr.strip
+      end
+    end
+
+    def get_my_prs
+      prs = `gh pr list -A #{GITHUB_USERNAME} --json number,headRefName,url`
+      prs = JSON.parse(prs)
+      prs.map do |pr|
+        {branch: pr["headRefName"], number: pr["number"], url: pr["url"]}
+      end
     end
 
     def get_auth_token
