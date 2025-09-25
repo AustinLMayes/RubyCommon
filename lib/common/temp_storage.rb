@@ -23,7 +23,7 @@ module TempStorage
     end
 
     def get(key)
-        return nil if is_expired? key
+        return nil unless is_stored? key
         File.read "#{PATH}#{key}"
     end
 
@@ -33,8 +33,8 @@ module TempStorage
     end
 
     def clear(key)
-        File.delete "#{PATH}#{key}"
-        File.delete "#{PATH}#{key}.expiry"
+        File.delete "#{PATH}#{key}" if File.exists? "#{PATH}#{key}"
+        File.delete "#{PATH}#{key}.expiry" if File.exists? "#{PATH}#{key}.expiry"
     end
 
     def clear_expired
