@@ -11,6 +11,7 @@ module DataPacket
     query Servers($pageIndex: Int, $powerStatus_in: [PowerStatus!]) {
       servers(input: {pageIndex: $pageIndex, pageSize: 50, filter: {powerStatus_in: $powerStatus_in}}) {
         entries {
+          name
           alias
           location {
             name
