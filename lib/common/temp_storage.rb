@@ -4,11 +4,13 @@ module TempStorage
     PATH = "/tmp/ts-"
 
     def store(key, value, expiry: nil)
+        key = safe_key key
         File.write "#{PATH}#{key}", value
         File.write "#{PATH}#{key}.expiry", Time.now.to_i + expiry unless expiry.nil?
     end
 
     def is_stored?(key)
+        key = safe_key key
         stored = File.exists? "#{PATH}#{key}"
         if stored && File.exists?("#{PATH}#{key}.expiry")
             expired = is_expired? key
@@ -23,16 +25,19 @@ module TempStorage
     end
 
     def get(key)
+        key = safe_key key
         return nil unless is_stored? key
         File.read "#{PATH}#{key}"
     end
 
     def get_store_time(key)
+        key = safe_key key
         return nil unless File.exists? "#{PATH}#{key}"
         File.mtime "#{PATH}#{key}"
     end
 
     def clear(key)
+        key = safe_key key
         File.delete "#{PATH}#{key}" if File.exists? "#{PATH}#{key}"
         File.delete "#{PATH}#{key}.expiry" if File.exists? "#{PATH}#{key}.expiry"
     end
@@ -50,5 +55,9 @@ module TempStorage
     def is_expired?(key)
         return false unless File.exists? "#{PATH}#{key}.expiry"
         File.read("#{PATH}#{key}.expiry").to_i < Time.now.to_i
+    end
+
+    def safe_key(key)
+        key.gsub(/[^0-9A-Za-z.\-_]/, '_')
     end
 end
