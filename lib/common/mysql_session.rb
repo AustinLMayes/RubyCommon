@@ -17,7 +17,7 @@ class MysqlSession
         rescue Mysql2::Error => e
             error "Error #{e.errno}: #{e.error}"
         ensure
-            db.close
+            db.close if db
         end
     end
 end
