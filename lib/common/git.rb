@@ -56,7 +56,7 @@ module Git
       info "Deleting #{branches.join(" ")}..."
       branches.shuffle.each do |branch|
         system "git branch -D #{branch}"
-        system "git push origin --delete #{branch}" if remote
+        system "git push origin --delete #{branch}" if remote && !$dont_push
         wait_range 3, 6
       end
     end
@@ -71,11 +71,7 @@ module Git
     def push_branches(*branches, ensure_exists: true, delay: [0, 0], force: false)
       act_on_branches *branches, ensure_exists: ensure_exists, delay: delay do |branch|
         info "Pushing #{branch}"
-        if force
-          system "git", "pu", "--force"
-        else
-          system "git", "pu"
-        end
+        push(force: force)
       end
     end
   
@@ -226,8 +222,23 @@ module Git
     end
 
     # True if push was successful and new commits were pushed
-    def push
-      `git push --porcelain`.include? ".."
+    def push(force: false, make_branch_if_missing: true)
+      return false if $dont_push
+      if make_branch_if_missing && !branch_is_on_remote?(current_branch)
+        info "Branch #{current_branch} not found on remote, creating it..."
+        if force
+          `git push --porcelain --set-upstream --force origin #{current_branch}`
+        else
+          `git push --porcelain --set-upstream origin #{current_branch}`
+        end
+        return true
+      end
+      res = if force
+              `git push --porcelain --force`
+            else
+              `git push --porcelain`
+            end
+      res.include? ".."
     end
 
     def find_branches(pattern)
