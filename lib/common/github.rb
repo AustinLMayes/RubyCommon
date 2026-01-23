@@ -12,7 +12,10 @@ module GitHub
       info "Making PR based off of #{base} with title \"#{title} #{suffix}\" and body \"#{body}\""
       res = system "gh", "pr", "create", "--title", "#{title} #{suffix}", "--body", body, "--base", base, "--head", head == nil ? Git.current_branch : head
       error "Failed to create PR" unless res
-      get_pr_number(head == nil ? Git.current_branch : head)
+      num = get_pr_number(head == nil ? Git.current_branch : head)
+      pr_link = `gh pr view #{num} --json url --jq '.url'`.strip
+      TickTick.create_task(nil, "PR ##{num}: #{title} #{suffix}", {content: "[PR ##{num}](#{pr_link})"})
+      num
     end
 
     def change_pr_base(branch, base)
