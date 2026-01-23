@@ -42,7 +42,15 @@ module TickTick
 
   private
 
+  @requests = 0
+
   def request_ticktick(method, path, body = nil)
+    @requests += 1
+    if @requests > 90
+      warning "Approaching TickTick API rate limit, sleeping for 60 seconds..."
+      sleep 60
+      @requests = 0
+    end
     uri = URI("#{API_URL}v1/#{path}")
     req_class = case method.upcase
                 when 'GET'
