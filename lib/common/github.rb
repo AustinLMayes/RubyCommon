@@ -13,6 +13,10 @@ module GitHub
       res = system "gh", "pr", "create", "--title", "#{title} #{suffix}", "--body", body, "--base", base, "--head", head == nil ? Git.current_branch : head
       error "Failed to create PR" unless res
       num = get_pr_number(head == nil ? Git.current_branch : head)
+      if num.nil? || num.empty? || !(num =~ /^\d+$/)
+        warning "Could not get PR number after creation! PR creation result: #{res} Head: #{head == nil ? Git.current_branch : head}"
+        return nil
+      end
       pr_link = `gh pr view #{num} --json url --jq '.url'`.strip
       TickTick.create_task(nil, "PR ##{num}: #{title} #{suffix}", {content: "[PR ##{num}](#{pr_link})"})
       num
