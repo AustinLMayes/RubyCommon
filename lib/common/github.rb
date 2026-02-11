@@ -12,9 +12,10 @@ module GitHub
       info "Making PR based off of #{base} with title \"#{title} #{suffix}\" and body \"#{body}\""
       res = system "gh", "pr", "create", "--title", "#{title} #{suffix}", "--body", body, "--base", base, "--head", head == nil ? Git.current_branch : head
       error "Failed to create PR" unless res
+      sleep 10 # wait a bit for GitHub to register the new PR
       num = get_pr_number(head == nil ? Git.current_branch : head)
       if num.nil? || num.empty? || !(num =~ /^\d+$/)
-        warning "Could not get PR number after creation! PR creation result: #{res} Head: #{head == nil ? Git.current_branch : head}"
+        warning "Could not get PR number after creation! PR creation result: #{res} Head: #{head == nil ? Git.current_branch : head} Num: #{num}"
         return nil
       end
       pr_link = `gh pr view #{num} --json url --jq '.url'`.strip
