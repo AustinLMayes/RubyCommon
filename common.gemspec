@@ -9,4 +9,9 @@ Gem::Specification.new do |s|
   
     s.files        = Dir["{lib}/**/*.rb", "bin/*", "LICENSE", "*.md"]
     s.require_path = 'lib'
+
+    s.add_dependency "octokit", "~> 7.0"
+    s.add_dependency "mongo", "~> 2.0"
+    s.add_dependency "mysql2", "~> 0.5"
+    s.add_dependency "activesupport", "~> 6.0"
   end
