@@ -94,8 +94,11 @@ module TickTick
   end
 
   def token
+    if ENV["TICKTICK_TOKEN"]
+      return ENV["TICKTICK_TOKEN"]
+    end
     token_file = File.join(Dir.home, ".ticktick_token")
-    if File.exists?(token_file)
+    if File.exist?(token_file)
       File.read(token_file).strip
     else
       warning "TickTick token file not found at #{token_file}! Generating..."
