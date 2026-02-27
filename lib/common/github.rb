@@ -6,20 +6,31 @@ module GitHub
     extend self
 
     GITHUB_USERNAME = `gh api user | jq -r .login`.strip
+
+    TRAIN = ExternalServer.new("localhost", 4567)
   
-    def make_pr(title, body: " ", base: nil, suffix: "", head: nil)
+    def make_pr(title, body: " ", base: nil, suffix: "", head: nil, train: nil)
       base = "production" unless base
       info "Making PR based off of #{base} with title \"#{title} #{suffix}\" and body \"#{body}\""
       res = system "gh", "pr", "create", "--title", "#{title} #{suffix}", "--body", body, "--base", base, "--head", head == nil ? Git.current_branch : head
       error "Failed to create PR" unless res
-      sleep 10 # wait a bit for GitHub to register the new PR
+      sleep 5 # wait a bit for GitHub to register the new PR
       num = get_pr_number(head == nil ? Git.current_branch : head)
       if num.nil? || num.empty? || !(num =~ /^\d+$/)
         warning "Could not get PR number after creation! PR creation result: #{res} Head: #{head == nil ? Git.current_branch : head} Num: #{num}"
-        return nil
+        sleep 5
+        num = get_pr_number(head == nil ? Git.current_branch : head)
+        if num.nil? || num.empty? || !(num =~ /^\d+$/)
+          error "Still could not get PR number after waiting! Something went wrong with PR creation. Please check manually. Head: #{head == nil ? Git.current_branch : head} Num: #{num}"
+          return nil
+        end
       end
       pr_link = `gh pr view #{num} --json url --jq '.url'`.strip
       TickTick.create_task(nil, "PR ##{num}: #{title} #{suffix}", {content: "[PR ##{num}](#{pr_link})"})
+      TRAIN.if_connectable do |conn|
+        train ||= SecureRandom.hex(4)
+        conn.send_request("command", {input: "add #{train} #{Git.repo_name_with_org} #{num}"})
+      end
       num
     end
 

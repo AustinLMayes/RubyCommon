@@ -43,6 +43,10 @@ module Git
     def repo_org
       `git config --get remote.origin.url`.strip.split(":").last.split("/").first
     end
+
+    def repo_name_with_org
+      `git config --get remote.origin.url`.strip.split(":").last.split("/")[0..1].join("/").gsub(".git", "")
+    end
   
     def ensure_branch(branch)
       error "Not on expected branch #{branch}! On #{current_branch}" if current_branch.downcase != branch.downcase
