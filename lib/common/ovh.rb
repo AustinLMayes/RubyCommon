@@ -75,6 +75,39 @@ module OVH
     JSON.parse(res.body)
   end
 
+  def post(path, body: {})
+    url = URI.join(URL, path)
+
+    http = Net::HTTP.new(url.host, url.port)
+    http.use_ssl = true
+
+    body_str = body.to_json
+    req = Net::HTTP::Post.new(url)
+    set_request_headers(req, "POST", url, body_str)
+    req.body = body_str
+
+    res = http.request(req)
+    JSON.parse(res.body)
+  end
+
+  def delete(path)
+    url = URI.join(URL, path)
+
+    http = Net::HTTP.new(url.host, url.port)
+    http.use_ssl = true
+
+    req = Net::HTTP::Delete.new(url)
+    set_request_headers(req, "DELETE", url, "")
+
+    res = http.request(req)
+    if res.is_a?(Net::HTTPSuccess)
+      true
+    else
+      warning "Failed to delete resource at #{url}: #{res.code} #{res.message}"
+      false
+    end
+  end
+
   private
 
   def ovh_signature(method, full_url, tstamp, body_str)
