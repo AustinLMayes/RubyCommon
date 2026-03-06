@@ -30,7 +30,7 @@ module Jira
     def get(url, api: "api", version: "latest")
       ensure_api_vars
       where = API_URL.gsub("@API@", api).gsub("@VERSION@", version) + url
-      puts "GET #{where}..."
+      debug "GET #{where}..."
       res = JSON.parse(RestClient.get(where, {"Authorization": "Basic #{ENCODED_AUTH}", content_type: :json, accept: :json}).body)
       res
     end
@@ -38,7 +38,7 @@ module Jira
     def patch(url, data, api: "api", version: "latest")
       ensure_api_vars
       where = API_URL.gsub("@API@", api).gsub("@VERSION@", version) + url
-      puts "PATCH #{where} (data:#{data})..."
+      debug "PATCH #{where} (data:#{data})..."
       begin
         return JSON.parse(RestClient.patch(where, data, {"Authorization": "Basic #{ENCODED_AUTH}", content_type: :json, accept: :json}).body)
       rescue => e
@@ -50,7 +50,7 @@ module Jira
     def put(url, data, api: "api", version: "latest")
       ensure_api_vars
       where = API_URL.gsub("@API@", api).gsub("@VERSION@", version) + url
-      puts "PUT #{where} (data:#{data})..."
+      debug "PUT #{where} (data:#{data})..."
       res = RestClient.put(where, data, {"Authorization": "Basic #{ENCODED_AUTH}", content_type: :json, accept: :json}).body
       if res.strip.empty?
         return {}
@@ -61,7 +61,7 @@ module Jira
     def post(url, data, ignored_errors: [], api: "api", version: "latest")
       ensure_api_vars
       where = API_URL.gsub("@API@", api).gsub("@VERSION@", version) + url
-      puts "POST #{where} (data:#{data})..."
+      debug "POST #{where} (data:#{data})..."
       begin
           res = RestClient.post(where, data, {"Authorization": "Basic #{ENCODED_AUTH}", content_type: :json, accept: :json})
           return nil if res.body.strip.empty?
@@ -133,6 +133,7 @@ module Jira
         end
 
         def transition(id, transition_id)
+            info "Transitioning issue #{id} with transition #{transition_id}..."
             Jira.post "issue/#{id}/transitions", {transition: {id: transition_id}}.to_json
         end
 
@@ -222,7 +223,7 @@ module Jira
                   parent: {key: epic}
                 },
                 transition: {
-                  id: 11
+                  id: 2
                 }
             }
             res = Jira.post("issue", data.to_json)
