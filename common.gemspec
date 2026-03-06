@@ -13,5 +13,5 @@ Gem::Specification.new do |s|
     s.add_dependency "octokit", "~> 7.0"
     s.add_dependency "mongo", "~> 2.0"
     s.add_dependency "mysql2", "~> 0.5"
-    s.add_dependency "activesupport", "~> 6.0"
+    s.add_dependency "activesupport", "~> 7.0"
   end
