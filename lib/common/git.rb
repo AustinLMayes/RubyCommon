@@ -248,20 +248,22 @@ module Git
     def find_branches(pattern)
       puts "Looking for branches matching #{pattern}..."
       `git branch -a`.split("\n").select do |line|
-        line.include?(pattern) && !line.include?("remotes")
+        !line.include?("remotes") && line.downcase.match?(/.*#{pattern.downcase}.*$/)
       end.map do |line|
         line.gsub("*", "").gsub("\n", "").strip
       end
     end
 
     def find_branches_multi(*names)
-      names.map do |name|
+      branches = names.map do |name|
         if name.is_a? String
           find_branches name
         elsif name.is_a? Array
           find_branches_multi *name
         end
       end.flatten.uniq
+      info "Found branches: #{branches.join(", ")}"
+      branches
     end
 
     PATCHES_PATH = ENV["HOME"] + "/git-utils/patches"
