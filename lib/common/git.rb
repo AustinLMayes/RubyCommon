@@ -248,7 +248,7 @@ module Git
     def find_branches(pattern)
       puts "Looking for branches matching #{pattern}..."
       `git branch -a`.split("\n").select do |line|
-        !line.include?("remotes") && line.downcase.match?(/.*#{pattern.downcase}.*$/)
+        !line.include?("remotes") && line.match(/#{pattern}/)
       end.map do |line|
         line.gsub("*", "").gsub("\n", "").strip
       end
