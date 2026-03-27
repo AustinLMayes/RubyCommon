@@ -11,7 +11,7 @@ module GitHub
   
     def make_pr(title, body: " ", base: nil, suffix: "", head: nil, train: nil)
       base = "production" unless base
-      info "Making PR based off of #{base} with title \"#{title} #{suffix}\" and body \"#{body}\""
+      info "Making PR for #{head == nil ? Git.current_branch : head} based off of #{base} with title \"#{title} #{suffix}\" and body \"#{body}\""
       res = system "gh", "pr", "create", "--title", "#{title} #{suffix}", "--body", body, "--base", base, "--head", head == nil ? Git.current_branch : head
       error "Failed to create PR" unless res
       sleep 5 # wait a bit for GitHub to register the new PR
@@ -76,7 +76,7 @@ module GitHub
 
     def get_pr_number(branch, only_mine: true)
       author_filter = only_mine ? "-A #{GITHUB_USERNAME}" : ""
-      pr = `gh pr list #{author_filter} --json number,headRefName --jq '.[] | select(.headRefName == "#{branch}") | .number'`
+      pr = `gh pr list #{author_filter} --json number,headRefName --jq '.[] | select(.headRefName == "#{branch}") | .number' --limit=100`
       if pr.empty?
         nil
       else
@@ -85,7 +85,7 @@ module GitHub
     end
 
     def get_my_prs
-      prs = `gh pr list -A #{GITHUB_USERNAME} --json number,headRefName,url`
+      prs = `gh pr list -A #{GITHUB_USERNAME} --json number,headRefName,url --limit=100`
       prs = JSON.parse(prs)
       prs.map do |pr|
         {branch: pr["headRefName"], number: pr["number"], url: pr["url"]}
