@@ -11,7 +11,7 @@ module Jira
     API_URL = ENV['JIRA_API_URL']
     API_USER = ENV['JIRA_API_USER']
     API_TOKEN = ENV['JIRA_API_TOKEN']
-    ENCODED_AUTH = Base64.encode64("#{API_USER}:#{API_TOKEN}")
+    ENCODED_AUTH = Base64.strict_encode64("#{API_USER}:#{API_TOKEN}")
     AUSTIN_ACC_ID = ENV['JIRA_ACC_ID']
 
     UTILS_PATH = ENV['JIRA_UTILS_PATH'] || "/Users/austinmayes/Projects/Ruby/RubyCommon/utils"
