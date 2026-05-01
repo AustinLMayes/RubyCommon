@@ -56,6 +56,20 @@ module GitHub
       error "Failed to change PR title" unless res
     end
 
+    def change_pr_body(branch, body)
+      body = body.strip
+      body = nil if body.empty?
+      previous_body = get_pr_body(branch)
+      if previous_body == body
+        info "PR body already set to #{body} for #{branch}"
+        return
+      end
+      info "Changing PR body from #{previous_body} to #{body}"
+      body = "" if body.nil?
+      res = system "gh", "pr", "edit", branch, "--body", body
+      error "Failed to change PR body" unless res
+    end
+
     def get_pr_title(branch)
       title = `gh pr view #{branch} --json title --jq '.title'`
       if title.empty?
@@ -71,6 +85,15 @@ module GitHub
         nil
       else
         base.strip
+      end
+    end
+
+    def get_pr_body(branch)
+      body = `gh pr view #{branch} --json body --jq '.body'`
+      if body.strip.empty?
+        nil
+      else
+        body.strip
       end
     end
 

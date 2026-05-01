@@ -140,9 +140,9 @@ module Git
     # [{sha: "123", date: Ruby Date, message: "message"}]
     def commits_after_with_date(date)
       warning "Branch must be pushed to get accurate dates" unless branch_is_on_remote? current_branch
-      `git log --reverse --since="#{date}" --pretty="%H||%aD||%s" #{branch_for_comparison}..#{current_branch}`.split("\n").map do |line|
-        sha, date, message = line.split("||")
-        {sha: sha, date: DateTime.parse(date), message: message}
+      `git log --reverse --since="#{date}" --pretty="%H||%aD" #{branch_for_comparison}..#{current_branch}`.split("\n").map do |line|
+        sha, date = line.split("||")
+        {sha: sha, date: DateTime.parse(date), message: commit_message(sha)}
       end
     end
 
@@ -155,9 +155,9 @@ module Git
     end
 
     def my_commits_after_with_date(date, author)
-      commits = `git log --reverse --since="#{date}" --pretty="%H||%aD||%s" #{branch_for_comparison}..#{current_branch}`.split("\n").map do |line|
-        sha, date, message = line.split("||")
-        {sha: sha, date: DateTime.parse(date), message: message}
+      commits = `git log --reverse --since="#{date}" --pretty="%H||%aD" #{branch_for_comparison}..#{current_branch}`.split("\n").map do |line|
+        sha, date = line.split("||")
+        {sha: sha, date: DateTime.parse(date), message: commit_message(sha)}
       end
       commits.select do |commit|
         commit[:message].include? author
@@ -205,7 +205,7 @@ module Git
     end
 
     def last_commit_message
-      `git log -1 --pretty=%B`.strip.split("\n").first
+      extract_commit_message(`git log -1 --pretty=%B`)
     end
 
     def commit(msg)
@@ -248,7 +248,10 @@ module Git
     def find_branches(pattern)
       puts "Looking for branches matching #{pattern}..."
       `git branch -a`.split("\n").select do |line|
-        !line.include?("remotes") && line.match(/#{pattern}/)
+        line = line.gsub("*", "")
+        line = line.strip
+        debug "Checking if #{line} matches #{pattern} (#{line.match?(/#{pattern}/)})" unless line.include?("remotes")
+        !line.include?("remotes") && line.match?(/#{pattern}/)
       end.map do |line|
         line.gsub("*", "").gsub("\n", "").strip
       end
@@ -309,5 +312,21 @@ module Git
         message.include? author
       end
       commits
+    end
+
+    def commit_message(sha)
+      full = `git log -1 --pretty=%B #{sha}`.strip
+      extract_commit_message full
+    end
+
+    private
+
+    def extract_commit_message(full)
+      full = full.split("\n") unless full.is_a? Array
+      full = full.reject { |line| line.start_with?("Signed-off-by:") || line.start_with?("#") }
+      title = full.first
+      body = ""
+      body = full[1..-1].join("\n") if full.length > 1
+      {title: title, body: body}
     end
 end
