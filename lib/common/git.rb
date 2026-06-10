@@ -228,19 +228,21 @@ module Git
     # True if push was successful and new commits were pushed
     def push(force: false, make_branch_if_missing: true)
       return false if $dont_push
-      if make_branch_if_missing && !branch_is_on_remote?(current_branch)
-        info "Branch #{current_branch} not found on remote, creating it..."
+      branch = current_branch
+      refspec = "#{branch}:#{branch}"
+      if make_branch_if_missing && !branch_is_on_remote?(branch)
+        info "Branch #{branch} not found on remote, creating it..."
         if force
-          `git push --porcelain --set-upstream --force origin #{current_branch}`
+          `git push --porcelain --set-upstream --force origin #{refspec}`
         else
-          `git push --porcelain --set-upstream origin #{current_branch}`
+          `git push --porcelain --set-upstream origin #{refspec}`
         end
         return true
       end
       res = if force
-              `git push --porcelain --force`
+              `git push --porcelain --force origin #{refspec}`
             else
-              `git push --porcelain`
+              `git push --porcelain origin #{refspec}`
             end
       res.include? ".."
     end
