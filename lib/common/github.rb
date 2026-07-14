@@ -11,108 +11,52 @@ module GitHub
   
     def make_pr(title, body: " ", base: nil, suffix: "", head: nil, train: nil)
       base = "production" unless base
-      info "Making PR for #{head == nil ? Git.current_branch : head} based off of #{base} with title \"#{title} #{suffix}\" and body \"#{body}\""
-      res = system "gh", "pr", "create", "--title", "#{title} #{suffix}", "--body", body, "--base", base, "--head", head == nil ? Git.current_branch : head
-      error "Failed to create PR" unless res
-      sleep 5 # wait a bit for GitHub to register the new PR
-      num = get_pr_number(head == nil ? Git.current_branch : head)
-      if num.nil? || num.empty? || !(num =~ /^\d+$/)
-        warning "Could not get PR number after creation! PR creation result: #{res} Head: #{head == nil ? Git.current_branch : head} Num: #{num}"
-        sleep 5
-        num = get_pr_number(head == nil ? Git.current_branch : head)
-        if num.nil? || num.empty? || !(num =~ /^\d+$/)
-          error "Still could not get PR number after waiting! Something went wrong with PR creation. Please check manually. Head: #{head == nil ? Git.current_branch : head} Num: #{num}"
-          return nil
-        end
-      end
-      pr_link = `gh pr view #{num} --json url --jq '.url'`.strip
-      TickTick.create_task(nil, "PR ##{num}: #{title} #{suffix}", {content: "[PR ##{num}](#{pr_link})"})
+      head ||= Git.current_branch
+      full_title = "#{title} #{suffix}".strip
+      info "Making PR for #{head} based off of #{base} with title #{full_title.inspect}"
+      repo = Git.repo_name_with_org
+      out = `gh api repos/#{repo}/pulls -X POST \
+        -f title=#{full_title.shellescape} \
+        -f head=#{head.shellescape} \
+        -f base=#{base.shellescape} \
+        -f body=#{body.to_s.shellescape} 2>&1`
+      error "Failed to create PR: #{out.strip[0, 300]}" unless $?.success?
+      created = JSON.parse(out)
+      num = created["number"].to_s
+      pr_link = created["html_url"]
+      TickTick.create_task(nil, "PR ##{num}: #{full_title}", {content: "[PR ##{num}](#{pr_link})"})
       TRAIN.if_connectable do |conn|
         train ||= SecureRandom.hex(4)
-        conn.send_request("command", {input: "add #{train} #{Git.repo_name_with_org} #{num}"})
+        conn.send_request("command", {input: "add #{train} #{repo} #{num}"})
       end
       num
     end
 
-    def change_pr_base(branch, base)
-      previous_base = get_pr_base(branch)
-      if previous_base == base
-        info "PR base already set to #{base} for #{branch}"
-        return
-      end
-      info "Changing PR base to #{base} for #{branch}"
-      # system "gh" "pr", "edit", branch, "--base", base
-      `gh pr edit #{branch} --base #{base}`
-    end
-
     def change_pr_title(branch, title)
-      previous_title = get_pr_title(branch)
-      if previous_title == title
-        info "PR title already set to #{title} for #{branch}"
-        return
-      end
-      info "Changing PR title to #{title}"
-      res = system "gh", "pr", "edit", branch, "--title", title
-      error "Failed to change PR title" unless res
+      num = get_pr_number(branch, only_mine: false)
+      error "No PR found for #{branch}" if num.nil? || num.empty?
+      info "Setting PR title to #{title.inspect} on ##{num}"
+      out = `gh api repos/#{Git.repo_name_with_org}/pulls/#{num} -X PATCH -f title=#{title.shellescape} 2>&1`
+      error "Failed to change PR title: #{out.strip[0, 200]}" unless $?.success?
     end
 
     def change_pr_body(branch, body)
-      body = body.strip
-      body = nil if body.empty?
-      previous_body = get_pr_body(branch)
-      if previous_body == body
-        info "PR body already set to #{body} for #{branch}"
-        return
-      end
-      info "Changing PR body from #{previous_body} to #{body}"
-      body = "" if body.nil?
-      res = system "gh", "pr", "edit", branch, "--body", body
-      error "Failed to change PR body" unless res
-    end
-
-    def get_pr_title(branch)
-      title = `gh pr view #{branch} --json title --jq '.title'`
-      if title.empty?
-        nil
-      else
-        title.strip
-      end
-    end
-
-    def get_pr_base(branch)
-      base = `gh pr view #{branch} --json baseRefName --jq '.baseRefName'`
-      if base.empty?
-        nil
-      else
-        base.strip
-      end
-    end
-
-    def get_pr_body(branch)
-      body = `gh pr view #{branch} --json body --jq '.body'`
-      if body.strip.empty?
-        nil
-      else
-        body.strip
-      end
+      num = get_pr_number(branch, only_mine: false)
+      error "No PR found for #{branch}" if num.nil? || num.empty?
+      info "Setting PR body on ##{num}"
+      out = `gh api repos/#{Git.repo_name_with_org}/pulls/#{num} -X PATCH -f body=#{body.to_s.shellescape} 2>&1`
+      error "Failed to change PR body: #{out.strip[0, 200]}" unless $?.success?
     end
 
     def get_pr_number(branch, only_mine: true)
-      author_filter = only_mine ? "-A #{GITHUB_USERNAME}" : ""
-      pr = `gh pr list #{author_filter} --json number,headRefName --jq '.[] | select(.headRefName == "#{branch}") | .number' --limit=100`
-      if pr.empty?
-        nil
-      else
-        pr.strip
-      end
-    end
-
-    def get_my_prs
-      prs = `gh pr list -A #{GITHUB_USERNAME} --json number,headRefName,url --limit=100`
-      prs = JSON.parse(prs)
-      prs.map do |pr|
-        {branch: pr["headRefName"], number: pr["number"], url: pr["url"]}
-      end
+      repo = Git.repo_name_with_org
+      owner = repo.split("/").first
+      url = "repos/#{repo}/pulls?head=#{owner}:#{branch}&state=open&per_page=100"
+      out = `gh api '#{url}' 2>/dev/null`
+      return nil if out.strip.empty?
+      prs = JSON.parse(out)
+      prs = prs.select { |p| p.dig("user", "login") == GITHUB_USERNAME } if only_mine
+      prs.empty? ? nil : prs.first["number"].to_s
     end
 
     def get_auth_token

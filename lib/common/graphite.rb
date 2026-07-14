@@ -136,18 +136,26 @@ module Graphite
 
   # On 401, refreshes the session once and retries before bubbling up.
   def web_get(path, params: {})
+    web_request(:get, path, params: params)
+  end
+
+  def web_post(path, body)
+    web_request(:post, path, body: body)
+  end
+
+  def web_request(method, path, params: {}, body: nil)
     sess = web_session
     raise Error, "No web session — run `#{WEB_SESSION_REFRESH_SCRIPT} login`" unless sess
 
-    res = web_request_once(path, params: params, sess: sess)
+    res = web_request_once(method, path, params: params, body: body, sess: sess)
     return parse_web_response(res) unless res.code.to_s == "401"
 
     info "Graphite web session 401 — refreshing"
     web_session_refresh!
     sess = web_session
     raise Error, "Session refresh ran but cookie still missing" unless sess
-    res = web_request_once(path, params: params, sess: sess)
-    raise Error, "GET #{path}: HTTP #{res.code} (after refresh)" unless res.is_a?(Net::HTTPSuccess)
+    res = web_request_once(method, path, params: params, body: body, sess: sess)
+    raise Error, "#{method.upcase} #{path}: HTTP #{res.code} (after refresh)" unless res.is_a?(Net::HTTPSuccess)
     parse_web_response(res)
   end
 
@@ -171,6 +179,27 @@ module Graphite
   def web_pull_request_timeline(repo, pr_number)
     owner, name = repo.split("/")
     web_get("/graphite/github-pr/#{owner}/#{name}/#{pr_number}/pull-request-timeline")
+  end
+
+  def web_update_pr_thread(owner, thread_id, resolved: true)
+    web_post("/graphite/mutation/update-pr-thread", {
+      forgeSource: "github",
+      owner: owner,
+      id: thread_id,
+      isResolved: resolved
+    })
+  end
+
+  # User logins only — endpoint rejects team slugs.
+  def web_rerequest_specific_reviews(repo, pr_number, logins)
+    owner, name = repo.split("/")
+    web_post("/graphite/mutation/rerequest-specific-reviews", {
+      forgeSource: "github",
+      name: name,
+      owner: owner,
+      number: pr_number.to_s,
+      logins: logins
+    })
   end
 
   ## ----- CLI surface (gt shellouts) -----
@@ -248,13 +277,6 @@ module Graphite
     capture(dir, "log", "short")
   end
 
-  def info(dir = Dir.pwd, branch: nil, body: false)
-    args = ["info"]
-    args += ["--branch", branch] if branch
-    args << "--body" if body
-    capture(dir, *args)
-  end
-
   def mergeability(dir = Dir.pwd, branch:)
     Dir.chdir(dir) { Git.checkout_branch(branch) }
     if system("gt", "--cwd", dir, "--no-interactive", "--quiet", "merge", "--dry-run",
@@ -268,12 +290,14 @@ module Graphite
   ## ----- private -----
 
   # Returns the raw Net::HTTPResponse so the caller can branch on 401.
-  def web_request_once(path, params:, sess:)
+  def web_request_once(method, path, params: {}, body: nil, sess:)
     uri = URI.parse("#{WEB_BASE}#{path}")
-    unless params.empty?
-      uri.query = URI.encode_www_form(params)
-    end
-    req = Net::HTTP::Get.new(uri.request_uri)
+    uri.query = URI.encode_www_form(params) unless params.empty?
+    req = case method
+          when :get  then Net::HTTP::Get.new(uri.request_uri)
+          when :post then Net::HTTP::Post.new(uri.request_uri)
+          else raise ArgumentError, "Unsupported HTTP method: #{method}"
+          end
     req["Cookie"] = cookie_header_for(sess, uri)
     req["Accept"] = "*/*"
     req["Accept-Language"] = "en-US,en;q=0.9"
@@ -286,6 +310,14 @@ module Graphite
     req["X-Graphite-Page-Status"] = "ACTIVE"
     req["X-Graphite-Tab"] = (@web_tab_id ||= SecureRandom.uuid)
     req["X-Graphite-Client-Request-Id"] = SecureRandom.uuid
+    if body
+      req["Content-Type"] = "text/plain"
+      req["Origin"] = "https://app.graphite.com"
+      # Required — POSTs 401 with "invalid-csrf-token" otherwise.
+      csrf = sess["csrfToken"]
+      req["X-CSRF-TOKEN"] = csrf if csrf
+      req.body = body.to_json
+    end
     Net::HTTP.start(uri.hostname, uri.port, use_ssl: true, read_timeout: 30) do |http|
       http.request(req)
     end
