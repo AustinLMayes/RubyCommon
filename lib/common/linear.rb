@@ -142,14 +142,29 @@ module Linear
   end
 
   ISSUE_FIELDS = <<~GQL.freeze
-    id identifier number title description url updatedAt
+    id identifier number title description url updatedAt priority priorityLabel
     state { id name type }
     assignee { id name email displayName }
     team { id key name }
+    project { id name }
     parent { id identifier }
     labels { nodes { id name } }
     children { nodes { id } }
   GQL
+
+  module Projects
+    extend self
+
+    def list(team_key: nil)
+      filter = team_key ? { accessibleTeams: { some: { key: { eq: team_key } } } } : {}
+      Linear.query(<<~GQL, { filter: filter })
+        query($filter: ProjectFilter) {
+          projects(filter: $filter, first: 250) { nodes { id name state } }
+        }
+      GQL
+        .dig("projects", "nodes")
+    end
+  end
 
   module Issues
     extend self
