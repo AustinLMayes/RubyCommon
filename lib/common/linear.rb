@@ -100,6 +100,28 @@ module Linear
     end
   end
 
+  module Labels
+    extend self
+
+    def id(name, team_key: nil)
+      @cache ||= {}
+      ck = [name, team_key]
+      return @cache[ck] if @cache.key?(ck)
+      data = Linear.query(<<~GQL, { name: name })
+        query($name: String!) {
+          issueLabels(filter: { name: { eq: $name } }, first: 20) {
+            nodes { id name team { key } }
+          }
+        }
+      GQL
+      nodes = data.dig("issueLabels", "nodes") || []
+      pick = nodes.find { |n| team_key && n.dig("team", "key") == team_key } ||
+             nodes.find { |n| n["team"].nil? } ||
+             nodes.first
+      @cache[ck] = pick&.fetch("id", nil)
+    end
+  end
+
   module Users
     extend self
 
@@ -211,10 +233,11 @@ module Linear
       update(issue["id"], { cycleId: cycle_id })
     end
 
-    def create(team_key:, title:, description: nil, parent_id: nil, assignee_id: AUSTIN_USER_ID, state: nil, label_ids: nil)
+    def create(team_key:, title:, description: nil, parent_id: nil, project_id: nil, assignee_id: AUSTIN_USER_ID, state: nil, label_ids: nil)
       input = { teamId: Linear::Teams.id(team_key), title: title, assigneeId: assignee_id }
       input[:description] = description if description && !description.empty?
       input[:parentId] = parent_id if parent_id
+      input[:projectId] = project_id if project_id
       input[:stateId] = Linear::Teams.state_id(team_key, state) if state
       input[:labelIds] = label_ids if label_ids
       data = Linear.query(<<~GQL, { input: input })
