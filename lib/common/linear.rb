@@ -142,7 +142,7 @@ module Linear
   end
 
   ISSUE_FIELDS = <<~GQL.freeze
-    id identifier number title description url
+    id identifier number title description url updatedAt
     state { id name type }
     assignee { id name email displayName }
     team { id key name }
