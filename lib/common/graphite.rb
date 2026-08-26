@@ -204,12 +204,23 @@ module Graphite
 
   ## ----- CLI surface (gt shellouts) -----
 
+  # gt writes its state files into the SHARED git dir, so a plain
+  # File.join(dir, ".git", ...) is wrong inside a git worktree, where `.git` is
+  # a file holding a `gitdir:` pointer rather than a directory. Resolving via
+  # `--git-common-dir` gives the shared dir for both a normal clone and a
+  # worktree. Returns nil when +dir+ isn't a git repo at all.
+  def git_state_path(dir, filename)
+    common = `git -C #{dir.to_s.shellescape} rev-parse --git-common-dir 2>/dev/null`.strip
+    return nil if common.empty?
+    File.join(File.expand_path(common, dir), filename)
+  end
+
   # Reads the trunk branch name from the repo's local Graphite config
-  # (`<dir>/.git/.graphite_repo_config`). Returns nil if gt has never been
-  # initialized in this clone.
+  # (`.graphite_repo_config` in the shared git dir). Returns nil if gt has never
+  # been initialized in this clone.
   def trunk(dir = Dir.pwd)
-    config_path = File.join(dir, ".git", ".graphite_repo_config")
-    return nil unless File.exist?(config_path)
+    config_path = git_state_path(dir, ".graphite_repo_config")
+    return nil if config_path.nil? || !File.exist?(config_path)
     JSON.parse(File.read(config_path))["trunk"]
   rescue JSON::ParserError
     nil
@@ -218,14 +229,15 @@ module Graphite
   # True iff +dir+ has been initialized with `gt init` (i.e. has a Graphite
   # repo config file).
   def initialized?(dir = Dir.pwd)
-    File.exist?(File.join(dir, ".git", ".graphite_repo_config"))
+    path = git_state_path(dir, ".graphite_repo_config")
+    !path.nil? && File.exist?(path)
   end
 
   # gt rewrites this file after each submit/sync; treat it as authoritative
   # only for branches gt has actually seen since the last submit.
   def local_pr_info(dir = Dir.pwd)
-    path = File.join(dir, ".git", ".graphite_pr_info")
-    return {} unless File.exist?(path)
+    path = git_state_path(dir, ".graphite_pr_info")
+    return {} if path.nil? || !File.exist?(path)
     JSON.parse(File.read(path))
   rescue JSON::ParserError
     {}
