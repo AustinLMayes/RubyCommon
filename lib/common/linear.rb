@@ -63,9 +63,12 @@ module Linear
   module Teams
     extend self
 
+    STATE_CACHE_TTL = 300
+
     def by_key(key)
       @cache ||= {}
-      return @cache[key] if @cache.key?(key)
+      entry = @cache[key]
+      return entry[:node] if entry && (Time.now.to_i - entry[:at]) < STATE_CACHE_TTL
       data = Linear.query(<<~GQL, { key: key })
         query($key: String!) {
           teams(filter: { key: { eq: $key } }, first: 1) {
@@ -79,7 +82,9 @@ module Linear
       GQL
       node = data.dig("teams", "nodes", 0)
       raise Error, "No Linear team with key #{key}" if node.nil?
-      @cache[key] = node
+      # WORKAROUND: cache expires because renaming a workflow state keeps its id, so a stale name map writes to the wrong state for as long as the process lives.
+      @cache[key] = { node: node, at: Time.now.to_i }
+      node
     end
 
     def id(key)
