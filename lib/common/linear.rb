@@ -9,6 +9,7 @@ require "json"
 require "net/http"
 require "uri"
 require_relative "logging"
+require_relative "temp_storage"
 
 module Linear
   extend self
@@ -20,10 +21,11 @@ module Linear
 
   AUSTIN_USER_ID = "c2d28e7c-0733-4892-9196-a4c169704d80"
 
-  TEAMS = {
-    "CCENG" => "CubeCraft Engineering",
-    "ROC"   => "Rocket Engineering",
-  }.freeze
+  ISSUE_ID_PATTERN = /\b[A-Z][A-Z0-9]*-\d+\b/.freeze
+
+  # WORKAROUND: only consulted when the teams query fails; a hardcoded key list silently drops
+  # issues from any team added after it was written, which is the bug this whole path exists to avoid.
+  FALLBACK_TEAM_KEYS = %w[ANT CCENG CCQA CON FRO INFRA JCC PRO ROC].freeze
 
   def ensure_api_key
     raise Error, "Missing required environment variable: LINEAR_API_KEY" if API_KEY.nil? || API_KEY.empty?
@@ -55,15 +57,39 @@ module Linear
   end
 
   def parse_identifier(identifier)
-    m = identifier.to_s.match(/\A([A-Z]+)-(\d+)\z/)
+    m = identifier.to_s.match(/\A([A-Z][A-Z0-9]*)-(\d+)\z/)
     raise Error, "Not a Linear issue identifier: #{identifier.inspect}" unless m
     [m[1], m[2].to_i]
+  end
+
+  def issue_ids(*texts)
+    keys = Teams.keys
+    texts.compact.join(" ").scan(ISSUE_ID_PATTERN).uniq.select { |id| keys.include?(id.split("-").first) }
   end
 
   module Teams
     extend self
 
     STATE_CACHE_TTL = 300
+    KEY_CACHE = "linear-team-keys"
+    KEY_CACHE_TTL = 86_400
+
+    def keys
+      return @keys if @keys
+      cached = read_cached_keys
+      return @keys = cached if cached
+      fetched = fetch_keys
+      # WORKAROUND: not memoized, so a daemon that started during a Linear outage retries
+      # on the next call instead of running on the fallback list until it is restarted.
+      return FALLBACK_TEAM_KEYS if fetched.nil?
+      @keys = fetched
+    end
+
+    def refresh_keys!
+      @keys = nil
+      TempStorage.clear(KEY_CACHE)
+      keys
+    end
 
     def by_key(key)
       @cache ||= {}
@@ -102,6 +128,30 @@ module Linear
 
     def active_cycle_id(key)
       by_key(key).dig("activeCycle", "id")
+    end
+
+    private
+
+    def read_cached_keys
+      raw = TempStorage.get(KEY_CACHE)
+      return nil if raw.nil? || raw.empty?
+      parsed = JSON.parse(raw)
+      parsed.is_a?(Array) && !parsed.empty? ? parsed : nil
+    rescue JSON::ParserError
+      TempStorage.clear(KEY_CACHE)
+      nil
+    end
+
+    def fetch_keys
+      data = Linear.query("query { teams(first: 250) { nodes { key } } }")
+      list = (data.dig("teams", "nodes") || []).map { |n| n["key"] }.compact
+      raise Error, "Linear returned no teams" if list.empty?
+      TempStorage.store(KEY_CACHE, list.to_json, expiry: KEY_CACHE_TTL)
+      list
+    rescue StandardError => e
+      # WORKAROUND: callers run inside PR Train's planner tick, where a raise stalls the train.
+      warning "Could not load Linear team keys (#{e.class}: #{e.message}); using fallback list"
+      nil
     end
   end
 
