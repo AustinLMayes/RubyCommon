@@ -202,6 +202,20 @@ module Graphite
     })
   end
 
+  # rerequest-specific-reviews takes user logins only. This one accepts a team
+  # slug as well, and re-fires the notification for a reviewer who has never
+  # responded, which neither that mutation nor GitHub's REST POST can do.
+  # Takes a single reviewer per call.
+  def web_poke_reviewer(repo, pr_number, login_or_team_slug)
+    owner, name = repo.split("/")
+    web_post("/graphite/mutation/poke-reviewer", {
+      repo: name,
+      owner: owner,
+      number: pr_number,
+      loginOrTeamSlug: login_or_team_slug
+    })
+  end
+
   ## ----- CLI surface (gt shellouts) -----
 
   # gt writes its state files into the SHARED git dir, so a plain
