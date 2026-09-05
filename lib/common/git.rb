@@ -249,13 +249,11 @@ module Git
 
     def find_branches(pattern)
       puts "Looking for branches matching #{pattern}..."
-      `git branch -a`.split("\n").select do |line|
-        line = line.gsub("*", "")
-        line = line.strip
+      # `+` marks a branch checked out in another worktree — drop it too, or the
+      # name comes back as "+ austin/s/foo" and callers use that as a branch.
+      `git branch -a`.split("\n").map { |line| line.sub(/\A\s*[*+]?\s*/, "").strip }.select do |line|
         debug "Checking if #{line} matches #{pattern} (#{line.match?(/#{pattern}/)})" unless line.include?("remotes")
         !line.include?("remotes") && line.match?(/#{pattern}/)
-      end.map do |line|
-        line.gsub("*", "").gsub("\n", "").strip
       end
     end
 
