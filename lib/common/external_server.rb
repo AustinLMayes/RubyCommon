@@ -24,7 +24,10 @@ class ExternalServer
         socket.close
         true
       rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH, SocketError => e
-        error "Connection to #{@address}:#{@port} failed: #{e.class}: #{e.message}"
+        # 🔴 `error` is puts + `exit false`, so this used to KILL the caller — every gutils task
+        # that reached a stopped PR Train died here instead of skipping, and `if_connectable`'s
+        # whole else-branch was unreachable. The `false` below never got a chance to return.
+        warning "Connection to #{@address}:#{@port} failed: #{e.class}: #{e.message}"
         false
       end
     end
