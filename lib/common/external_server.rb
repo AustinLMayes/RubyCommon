@@ -13,8 +13,13 @@ class ExternalServer
       res = Net::HTTP.post_form(uri, data)
       if res.is_a?(Net::HTTPSuccess)
         info "Successfully sent request to #{uri}: #{data}"
+        true
       else
-        error "Failed to send request to #{uri}: #{res.code} #{res.message}"
+        # 🔴 `error` is puts + `exit false`, so one refused command used to kill the whole batch —
+        # a submit over ten PRs died on the first the train rejected and the other nine never went.
+        # The body carries the server's reason; dropping it left "something failed" and nothing else.
+        warning "Failed to send request to #{uri}: #{res.code} #{res.message} — #{res.body.to_s.strip}"
+        false
       end
     end
 
