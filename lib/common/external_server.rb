@@ -1,3 +1,7 @@
+require "net/http"
+require "socket"
+require "uri"
+
 require_relative "logging"
 
 class ExternalServer
@@ -8,9 +12,22 @@ class ExternalServer
       @port = port
     end
 
+    # 🔴 Reaching the server is a per-call risk, not a once-per-batch one. `if_connectable` checks
+    # connectivity ONCE and callers then loop ten requests inside it, so a daemon that stops mid-loop
+    # threw an unrescued Errno::ECONNREFUSED and ended the rake task — the same outcome as the
+    # `exit false` this file just removed, arriving by a different door.
+    UNREACHABLE = [Errno::ECONNREFUSED, Errno::EHOSTUNREACH, Errno::ENETUNREACH, Errno::ETIMEDOUT,
+                   Errno::ECONNRESET, Errno::EPIPE, SocketError,
+                   Net::OpenTimeout, Net::ReadTimeout].freeze
+
     def send_request(path, data)
       uri = URI("http://#{@address}:#{@port}/#{path}")
-      res = Net::HTTP.post_form(uri, data)
+      begin
+        res = Net::HTTP.post_form(uri, data)
+      rescue *UNREACHABLE => e
+        warning "Could not reach #{uri}: #{e.class}: #{e.message}"
+        return false
+      end
       if res.is_a?(Net::HTTPSuccess)
         info "Successfully sent request to #{uri}: #{data}"
         true
