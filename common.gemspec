@@ -14,4 +14,7 @@ Gem::Specification.new do |s|
     s.add_dependency "mongo", "~> 2.0"
     s.add_dependency "mysql2", "~> 0.5"
     s.add_dependency "activesupport", "~> 7.0"
+    s.add_dependency "net-ssh", "~> 7.0"
+    # 🔴 Not a default gem since ruby 3.0, so it has to be declared like any other.
+    s.add_dependency "webrick", "~> 1.8"
   end
