@@ -87,6 +87,63 @@ class ExternalServerTest < Minitest::Test
     end
   end
 
+  # 🔴 The guard is a TOCTOU and the window is wide open. GitUtils checks `if_connectable` ONCE and
+  # then loops ten `send_request` calls inside it, so a daemon that stops — or was never up, which
+  # is its current state — makes an unrescued Errno::ECONNREFUSED end the rake task exactly as
+  # `exit false` did. Fixing is_connectable? alone left the batch just as fragile.
+  def test_a_server_that_is_not_listening_warns_rather_than_raising
+    reached = false
+    said = output_of do
+      @server.send_request('command', 'input' => 'status prs')
+      reached = true
+    end
+    assert reached, 'ECONNREFUSED escaped and ended the caller'
+    assert_includes said, '45999'
+  end
+
+  def test_a_batch_survives_the_server_going_away_midway
+    with_stub_server(200, 'OK') do |port|
+      client = ExternalServer.new('127.0.0.1', port)
+      quietly { client.send_request('command', 'input' => 'first') }
+    end
+
+    dead = ExternalServer.new('127.0.0.1', DEAD_PORT)
+    completed = 0
+    quietly { 3.times { dead.send_request('command', 'input' => 'later'); completed += 1 } }
+    assert_equal 3, completed, 'the batch stopped when the daemon went away mid-loop'
+  end
+
+  def test_a_dns_failure_is_also_survivable
+    reached = false
+    quietly do
+      ExternalServer.new('no-such-host.invalid', 80).send_request('command', 'input' => 'x')
+      reached = true
+    end
+    assert reached, 'a name that does not resolve ended the caller'
+  end
+
+  def test_an_unreachable_server_reports_false
+    result = nil
+    quietly { result = @server.send_request('command', 'input' => 'x') }
+    assert_equal false, result
+  end
+
+  def test_a_successful_request_reports_true
+    with_stub_server(200, 'OK') do |port|
+      result = nil
+      quietly { result = ExternalServer.new('127.0.0.1', port).send_request('command', 'input' => 'x') }
+      assert_equal true, result
+    end
+  end
+
+  def test_a_rejected_request_reports_false
+    with_stub_server(400, 'nope') do |port|
+      result = nil
+      quietly { result = ExternalServer.new('127.0.0.1', port).send_request('command', 'input' => 'x') }
+      assert_equal false, result
+    end
+  end
+
   private
 
   def with_stub_server(status, body)
