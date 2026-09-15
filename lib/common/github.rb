@@ -5,7 +5,13 @@ require 'octokit'
 module GitHub
     extend self
 
-    GITHUB_USERNAME = `gh api user | jq -r .login`.strip
+    # 🔴 Fetched on first use, not at load. As a constant this made an authenticated GitHub call
+    # every time anything required this library — ten per PRTrain suite run, before a single test
+    # ran, invisible to that suite's sandbox because nothing is armed at require time. It also
+    # meant the library could not load at all without an authenticated `gh`.
+    def github_username
+      @github_username ||= `gh api user | jq -r .login`.strip
+    end
 
     TRAIN = ExternalServer.new("localhost", 4567)
   
@@ -55,7 +61,7 @@ module GitHub
       out = `gh api '#{url}' 2>/dev/null`
       return nil if out.strip.empty?
       prs = JSON.parse(out)
-      prs = prs.select { |p| p.dig("user", "login") == GITHUB_USERNAME } if only_mine
+      prs = prs.select { |p| p.dig("user", "login") == github_username } if only_mine
       prs.empty? ? nil : prs.first["number"].to_s
     end
 
@@ -78,10 +84,10 @@ module GitHub
       client.auto_paginate = true
       prs = []
       prs += client.pull_requests(repo, state: 'closed', sort: 'created', direction: 'desc').select do |pr|
-        pr.user.login == GITHUB_USERNAME && pr.closed_at >= start && pr.closed_at <= e
+        pr.user.login == github_username && pr.closed_at >= start && pr.closed_at <= e
       end
       prs += client.pull_requests(repo, sort: 'created', direction: 'desc').select do |pr|
-        pr.user.login == GITHUB_USERNAME && pr.created_at >= start && pr.created_at <= e
+        pr.user.login == github_username && pr.created_at >= start && pr.created_at <= e
       end
       return prs
     end
