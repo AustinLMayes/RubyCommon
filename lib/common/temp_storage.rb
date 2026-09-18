@@ -11,8 +11,8 @@ module TempStorage
 
     def is_stored?(key)
         key = safe_key key
-        stored = File.exists? "#{PATH}#{key}"
-        if stored && File.exists?("#{PATH}#{key}.expiry")
+        stored = File.exist? "#{PATH}#{key}"
+        if stored && File.exist?("#{PATH}#{key}.expiry")
             expired = is_expired? key
             if expired
                 File.delete "#{PATH}#{key}"
@@ -32,14 +32,14 @@ module TempStorage
 
     def get_store_time(key)
         key = safe_key key
-        return nil unless File.exists? "#{PATH}#{key}"
+        return nil unless File.exist? "#{PATH}#{key}"
         File.mtime "#{PATH}#{key}"
     end
 
     def clear(key)
         key = safe_key key
-        File.delete "#{PATH}#{key}" if File.exists? "#{PATH}#{key}"
-        File.delete "#{PATH}#{key}.expiry" if File.exists? "#{PATH}#{key}.expiry"
+        File.delete "#{PATH}#{key}" if File.exist? "#{PATH}#{key}"
+        File.delete "#{PATH}#{key}.expiry" if File.exist? "#{PATH}#{key}.expiry"
     end
 
     def clear_expired
@@ -53,7 +53,7 @@ module TempStorage
     private
 
     def is_expired?(key)
-        return false unless File.exists? "#{PATH}#{key}.expiry"
+        return false unless File.exist? "#{PATH}#{key}.expiry"
         File.read("#{PATH}#{key}.expiry").to_i < Time.now.to_i
     end
 

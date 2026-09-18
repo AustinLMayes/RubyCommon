@@ -6,7 +6,7 @@ class ReplaceableFile
     def initialize(path, data)
         @path = path
         @data = data
-        raise "File does not exist" unless File.exists? path
+        raise "File does not exist" unless File.exist? path
     end
 
     def replace(&block)

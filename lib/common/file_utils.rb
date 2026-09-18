@@ -31,7 +31,7 @@ module FileUtils
                 end
             end
         end
-        dirs.delete_if { |dir| !File.exists?(dir + "/.git") }
+        dirs.delete_if { |dir| !File.exist?(dir + "/.git") }
         dirs.map do |dir|
             if dir.start_with?(".")
                 dir = File.expand_path(dir)

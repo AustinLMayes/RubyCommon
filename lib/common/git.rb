@@ -13,12 +13,12 @@ module Git
     end
 
     def ensure_git(where)
-      error "Repo not found at path #{where}!" unless File.exists? where
-      error "#{where} is not a Git directory!" unless File.exists? "#{where}/.git"
+      error "Repo not found at path #{where}!" unless File.exist? where
+      error "#{where} is not a Git directory!" unless File.exist? "#{where}/.git"
     end
 
     def is_repo?(where)
-      File.exists? where and File.exists? "#{where}/.git"
+      File.exist? where and File.exist? "#{where}/.git"
     end
 
     def branch_is_on_remote?(branch)
