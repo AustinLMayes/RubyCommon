@@ -30,10 +30,7 @@ module GitHub
         -F draft=#{draft} \
         -f body=#{body.to_s.shellescape} 2>&1`
       error "Failed to create PR: #{out.strip[0, 300]}" unless $?.success?
-      created = JSON.parse(out)
-      num = created["number"].to_s
-      pr_link = created["html_url"]
-      TickTick.create_task(nil, "PR ##{num}: #{full_title}", {content: "[PR ##{num}](#{pr_link})"})
+      num = JSON.parse(out)["number"].to_s
       forget_pr_number(head)
       num
     end
@@ -100,6 +97,7 @@ module GitHub
       number title body state isDraft baseRefName headRefName headRefOid baseRefOid
       mergeStateStatus reviewDecision mergedAt url
       mergeCommit { oid }
+      stack { number }
       reviewRequests(first: 20) { nodes { requestedReviewer {
         __typename ... on User { login } ... on Team { slug } ... on Bot { login } } } }
       reviews(last: 50) { nodes { state submittedAt author { __typename login } } }
