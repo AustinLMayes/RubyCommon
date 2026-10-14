@@ -1,9 +1,13 @@
 require_relative "logging"
 require_relative "git"
+require 'json'
 require 'octokit'
+require 'shellwords'
 
 module GitHub
     extend self
+
+    class Error < StandardError; end
 
     # 🔴 Fetched on first use, not at load. As a constant this made an authenticated GitHub call
     # every time anything required this library — ten per PRTrain suite run, before a single test
@@ -13,9 +17,7 @@ module GitHub
       @github_username ||= `gh api user | jq -r .login`.strip
     end
 
-    TRAIN = ExternalServer.new("localhost", 4567)
-  
-    def make_pr(title, body: " ", base: nil, suffix: "", head: nil, train: nil)
+    def make_pr(title, body: " ", base: nil, suffix: "", head: nil, draft: false)
       base = "production" unless base
       head ||= Git.current_branch
       full_title = "#{title} #{suffix}".strip
@@ -25,16 +27,14 @@ module GitHub
         -f title=#{full_title.shellescape} \
         -f head=#{head.shellescape} \
         -f base=#{base.shellescape} \
+        -F draft=#{draft} \
         -f body=#{body.to_s.shellescape} 2>&1`
       error "Failed to create PR: #{out.strip[0, 300]}" unless $?.success?
       created = JSON.parse(out)
       num = created["number"].to_s
       pr_link = created["html_url"]
       TickTick.create_task(nil, "PR ##{num}: #{full_title}", {content: "[PR ##{num}](#{pr_link})"})
-      TRAIN.if_connectable do |conn|
-        train ||= SecureRandom.hex(4)
-        conn.send_request("command", {input: "add #{train} #{repo} #{num}"})
-      end
+      forget_pr_number(head)
       num
     end
 
@@ -54,6 +54,14 @@ module GitHub
       error "Failed to change PR body: #{out.strip[0, 200]}" unless $?.success?
     end
 
+    def change_pr_base(branch, base)
+      num = get_pr_number(branch, only_mine: false)
+      error "No PR found for #{branch}" if num.nil? || num.empty?
+      info "Setting PR base to #{base} on ##{num}"
+      out = `gh api repos/#{Git.repo_name_with_org}/pulls/#{num} -X PATCH -f base=#{base.shellescape} 2>&1`
+      error "Failed to change PR base: #{out.strip[0, 200]}" unless $?.success?
+    end
+
     def get_pr_number(branch, only_mine: true)
       repo = Git.repo_name_with_org
       owner = repo.split("/").first
@@ -63,6 +71,57 @@ module GitHub
       prs = JSON.parse(out)
       prs = prs.select { |p| p.dig("user", "login") == github_username } if only_mine
       prs.empty? ? nil : prs.first["number"].to_s
+    end
+
+    def open_pr_number(branch)
+      @open_pr_numbers ||= {}
+      return @open_pr_numbers[branch] if @open_pr_numbers.key?(branch)
+      num = get_pr_number(branch, only_mine: false)
+      @open_pr_numbers[branch] = num.nil? ? nil : num.to_i
+    end
+
+    def forget_pr_number(branch)
+      @open_pr_numbers&.delete(branch)
+    end
+
+    def remote_sha(branch)
+      out = `git ls-remote origin refs/heads/#{branch.shellescape} 2>/dev/null`.strip
+      out.empty? ? nil : out.split(/\s+/).first
+    end
+
+    def push_sha(sha, branch, force: true)
+      return true if $dont_push
+      args = ["git", "push", "--atomic", "--no-verify"]
+      args << "--force" if force
+      system(*args, "origin", "#{sha}:refs/heads/#{branch}")
+    end
+
+    PR_STATE_FIELDS = <<~GQL.gsub(/\s+/, " ").strip
+      number title body state isDraft baseRefName headRefName headRefOid baseRefOid
+      mergeStateStatus reviewDecision mergedAt url
+      mergeCommit { oid }
+      reviewRequests(first: 20) { nodes { requestedReviewer {
+        __typename ... on User { login } ... on Team { slug } ... on Bot { login } } } }
+      reviews(last: 50) { nodes { state submittedAt author { __typename login } } }
+      reviewThreads(first: 100) { nodes { id isResolved } }
+      commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+    GQL
+
+    # Number => the raw GraphQL node, for every number GitHub answered for. One request per call,
+    # so keep +numbers+ to a couple of dozen; a PR that does not exist is simply absent.
+    def pull_request_states(repo, numbers)
+      owner, name = repo.split("/")
+      aliases = numbers.map { |n| "pr#{n}: pullRequest(number: #{n.to_i}) { #{PR_STATE_FIELDS} }" }
+      query = "{ repository(owner: #{owner.to_json}, name: #{name.to_json}) { #{aliases.join(" ")} } }"
+      out = IO.popen(["gh", "api", "graphql", "-f", "query=#{query}"], err: [:child, :out], &:read).to_s
+      raise Error, "gh api graphql failed for #{repo}: #{out.strip[0, 300]}" unless $?.success?
+      parsed = begin
+        JSON.parse(out)
+      rescue JSON::ParserError
+        raise Error, "gh api graphql returned non-JSON for #{repo}: #{out.strip[0, 200]}"
+      end
+      nodes = parsed.dig("data", "repository") || {}
+      nodes.values.compact.each_with_object({}) { |node, h| h[node["number"]] = node }
     end
 
     def get_auth_token
