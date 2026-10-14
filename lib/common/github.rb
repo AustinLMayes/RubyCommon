@@ -112,13 +112,15 @@ module GitHub
       aliases = numbers.map { |n| "pr#{n}: pullRequest(number: #{n.to_i}) { #{PR_STATE_FIELDS} }" }
       query = "{ repository(owner: #{owner.to_json}, name: #{name.to_json}) { #{aliases.join(" ")} } }"
       out = IO.popen(["gh", "api", "graphql", "-f", "query=#{query}"], err: [:child, :out], &:read).to_s
-      raise Error, "gh api graphql failed for #{repo}: #{out.strip[0, 300]}" unless $?.success?
+      # A number that no longer resolves makes gh exit 1 with the other nodes still in `data`, so
+      # the exit code alone would throw away nineteen good answers for one bad one.
       parsed = begin
         JSON.parse(out)
       rescue JSON::ParserError
-        raise Error, "gh api graphql returned non-JSON for #{repo}: #{out.strip[0, 200]}"
+        raise Error, "gh api graphql failed for #{repo}: #{out.strip[0, 300]}"
       end
-      nodes = parsed.dig("data", "repository") || {}
+      nodes = parsed.dig("data", "repository")
+      raise Error, "gh api graphql failed for #{repo}: #{out.strip[0, 300]}" unless nodes.is_a?(Hash)
       nodes.values.compact.each_with_object({}) { |node, h| h[node["number"]] = node }
     end
 
