@@ -320,6 +320,25 @@ module Linear
       res["issue"]
     end
 
+    def children(identifier)
+      key, number = Linear.parse_identifier(identifier)
+      data = Linear.query(<<~GQL, { key: key, number: number })
+        query($key: String!, $number: Float!) {
+          issues(filter: { team: { key: { eq: $key } }, number: { eq: $number } }, first: 1) {
+            nodes { children { nodes { id identifier } } }
+          }
+        }
+      GQL
+      data.dig("issues", "nodes", 0, "children", "nodes") || []
+    end
+
+    def delete(issue_uuid)
+      data = Linear.query(<<~GQL, { id: issue_uuid })
+        mutation($id: String!) { issueDelete(id: $id) { success } }
+      GQL
+      data.dig("issueDelete", "success")
+    end
+
     def search(filter, first: 100)
       issues = []
       cursor = nil
