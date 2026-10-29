@@ -116,7 +116,11 @@ class ShellCommand
     s = str.to_s
     return s[1..-2].to_s if s.length >= 2 && s[0] == "'" && s[-1] == "'"
     return s[1..-2].to_s.gsub(/\\(.)/, '\1') if s.length >= 2 && s[0] == '"' && s[-1] == '"'
+    return s unless s.match?(/['"]/)
 
+    words = Shellwords.split(s)
+    words.length == 1 ? words.first : s
+  rescue ArgumentError
     s
   end
 

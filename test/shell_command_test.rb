@@ -197,4 +197,9 @@ class ShellCommandTest < Minitest::Test
                    ShellCommand.expand_git_alias('sneak', [], dir: dir, overrides: ['alias.sneak=push origin main'])
     end
   end
+
+  def test_quotes_inside_a_word_are_removed
+    parsed = ShellCommand.new(%(git -c alias.pu='push -u origin HEAD' pu))
+    assert_equal 'alias.pu=push -u origin HEAD', parsed.unquote(parsed.commands.first[2])
+  end
 end
