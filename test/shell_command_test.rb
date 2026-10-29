@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'minitest/autorun'
+require 'tmpdir'
 require_relative '../lib/common/shell_command'
 
 class ShellCommandTest < Minitest::Test
@@ -154,5 +155,46 @@ class ShellCommandTest < Minitest::Test
   def test_semicolon_in_a_quoted_message_does_not_split
     parsed = ShellCommand.new('git commit -m "Subject; not a separator"')
     assert_equal ['Subject; not a separator'], parsed.flag_values('-m')
+  end
+
+  def with_repo
+    Dir.mktmpdir('shell-command') do |dir|
+      system('git', 'init', '-q', dir, exception: true)
+      system('git', '-C', dir, 'config', 'alias.pu', 'push -u origin HEAD', exception: true)
+      system('git', '-C', dir, 'config', 'alias.del', '!git branch -D $1 & git push -d origin', exception: true)
+      system('git', '-C', dir, 'config', 'alias.multi', "!echo one\necho two", exception: true)
+      yield dir
+    end
+  end
+
+  def test_plain_git_alias_splices_in_ahead_of_the_args
+    with_repo do |dir|
+      assert_equal [:git, %w[push -u origin HEAD --dry-run]],
+                   ShellCommand.expand_git_alias('pu', ['--dry-run'], dir: dir)
+    end
+  end
+
+  def test_shell_git_alias_appends_the_args_requoted
+    with_repo do |dir|
+      assert_equal [:shell, "git branch -D $1 & git push -d origin austin/x\\ y"],
+                   ShellCommand.expand_git_alias('del', ['austin/x y'], dir: dir)
+    end
+  end
+
+  def test_multi_line_alias_value_survives
+    with_repo do |dir|
+      assert_equal [:shell, "echo one\necho two"], ShellCommand.expand_git_alias('multi', [], dir: dir)
+    end
+  end
+
+  def test_non_alias_is_nil
+    with_repo { |dir| assert_nil ShellCommand.expand_git_alias('status', [], dir: dir) }
+  end
+
+  def test_command_line_config_alias_is_seen
+    with_repo do |dir|
+      assert_equal [:git, %w[push origin main]],
+                   ShellCommand.expand_git_alias('sneak', [], dir: dir, overrides: ['alias.sneak=push origin main'])
+    end
   end
 end

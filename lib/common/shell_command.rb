@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require 'open3'
+require 'shellwords'
+
 class ShellCommand
   # A heredoc body is data only if its consumer can't execute it — `bash <<'SH'` hides a real commit.
   INTERPRETERS = %w[
@@ -13,6 +16,9 @@ class ShellCommand
 
   SEPARATORS = [';', '&&', '||', '|', '&', "\n"].freeze
 
+  # `g` is the zsh alias for git that the Bash tool's shell carries
+  GIT_WORDS = %w[git g].freeze
+
   Heredoc = Struct.new(:delim, :dash, :owner, :body, :executable, keyword_init: true) do
     def executable?
       executable
@@ -20,6 +26,26 @@ class ShellCommand
   end
 
   attr_reader :raw, :heredocs
+
+  def self.git_aliases(dir, overrides = [])
+    @git_aliases ||= {}
+    @git_aliases[[dir, overrides]] ||= begin
+      location = dir ? ['-C', dir] : []
+      out, status = Open3.capture2('git', *location, *overrides.flat_map { |o| ['-c', o] },
+                                   'config', '-z', '--get-regexp', '^alias\.', err: File::NULL)
+      entries = status.success? ? out.split("\0") : []
+      entries.to_h { |e| e.delete_prefix('alias.').split("\n", 2).then { |k, v| [k, v.to_s] } }
+    end
+  end
+
+  # <rest> must already be unquoted - a `!` alias re-quotes it into the shell code git runs
+  def self.expand_git_alias(sub, rest, dir: nil, overrides: [])
+    body = git_aliases(dir, overrides)[sub.to_s.downcase]
+    return nil if body.nil?
+    return [:shell, [body[1..], *rest.map { |a| Shellwords.escape(a) }].join(' ')] if body.start_with?('!')
+
+    [:git, Shellwords.split(body) + rest]
+  end
 
   def initialize(raw)
     @raw = raw.to_s
@@ -40,7 +66,7 @@ class ShellCommand
   def git_commit?
     commands.any? do |tokens|
       words = tokens.reject { |t| t.start_with?('-') }
-      words[0] == 'git' && words[1] == 'commit'
+      GIT_WORDS.include?(words[0]) && words[1] == 'commit'
     end
   end
 
@@ -79,7 +105,7 @@ class ShellCommand
   end
 
   def commit_heredoc
-    heredocs.find { |h| h.owner == 'git' }
+    heredocs.find { |h| GIT_WORDS.include?(h.owner) }
   end
 
   def data_heredocs
