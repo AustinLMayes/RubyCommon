@@ -40,7 +40,7 @@ class ShellCommand
     end
   end
 
-  GitInvocation = Struct.new(:sub, :args, :raw_args, :dir, :overrides, :unresolved, :segment, :at, :cwd,
+  GitInvocation = Struct.new(:sub, :args, :raw_args, :dir, :overrides, :unresolved, :segment, :at, :cwd, :nested,
                              keyword_init: true)
 
   attr_reader :raw, :heredocs
@@ -179,12 +179,12 @@ class ShellCommand
       elsif GIT_WORDS.include?(name)
         moved = toks[0, toks.length - words.length].any? { |t| t.match?(REPO_ENV) }
         unresolved = 'a GIT_DIR / GIT_CONFIG style variable moves the repository this guard would read' if moved
-        site = { segment: toks, cwd: dir, at: toks.length - words.length + 1 }
+        site = { segment: toks, cwd: dir, at: toks.length - words.length + 1, nested: depth.positive? }
         resolve_git(words[1..], dir, [], unresolved, hops: hops, walk: walk, depth: depth, site: site, typed: true, &other)
       elsif SHELLS.include?(name) && depth < hops && (code = ShellCommand.inline_code(words, SHELL_CODE_FLAG))
         ShellCommand.new(unquote(code)).walk_git(dir, hops: hops, walk: walk, depth: depth + 1, &other)
       else
-        other&.call(words.map { |t| unquote(t) }, dir)
+        other&.call(words.map { |t| unquote(t) }, dir, toks.map { |t| unquote(t) })
         []
       end
     end
@@ -234,7 +234,7 @@ class ShellCommand
   def invocation(sub, rest, dir, overrides, unresolved, site)
     GitInvocation.new(sub: sub, args: rest.map { |a| unquote(a) }, raw_args: rest, dir: dir,
                       overrides: overrides, unresolved: unresolved, segment: site[:segment],
-                      at: sub && site[:at], cwd: site[:cwd])
+                      at: sub && site[:at], cwd: site[:cwd], nested: site[:nested])
   end
 
   def cd_target(words, dir, walk)

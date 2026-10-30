@@ -244,7 +244,7 @@ class ShellCommandTest < Minitest::Test
       found = invocations('git -C sub -c core.x=1 --no-pager status -s', dir)
       assert_equal [{ sub: 'status', args: ['-s'], raw_args: ['-s'], dir: File.realpath(sub),
                       overrides: ['core.x=1'], unresolved: nil,
-                      segment: %w[git -C sub -c core.x=1 --no-pager status -s], at: 6, cwd: dir }], found
+                      segment: %w[git -C sub -c core.x=1 --no-pager status -s], at: 6, cwd: dir, nested: false }], found
     end
   end
 
@@ -404,6 +404,20 @@ def test_git_invocation_hands_every_other_command_to_the_block
     assert_empty found
     real = File.realpath(dir)
     assert_equal [[%w[rm -f x], Dir.home], [%w[echo one], real], [%w[echo two], real], [['touch', 'a b'], real]], seen
+  end
+end
+
+def test_git_invocation_hands_the_block_the_whole_segment_too
+  seen = []
+  ShellCommand.new(%(FOO="a b" nice -n 5 fgutils prs:submit)).git_invocations(dir: Dir.home) { |words, _, toks| seen << [words, toks] }
+  assert_equal [[%w[fgutils prs:submit], ['FOO=a b', 'nice', '-n', '5', 'fgutils', 'prs:submit']]], seen
+end
+
+def test_git_invocation_says_whether_a_shell_got_in_between
+  with_repo do |dir|
+    assert_equal [false, false], [invocations('git push', dir).first[:nested], invocations('git pu', dir).first[:nested]]
+    assert_equal [true], invocations('bash -c "git push"', dir).map { |i| i[:nested] }
+    assert_equal [true, true], invocations('git del austin/x', dir).map { |i| i[:nested] }
   end
 end
 end
