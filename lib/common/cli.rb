@@ -4,6 +4,7 @@ require_relative 'cli/usage'
 require_relative 'cli/defaults'
 require_relative 'cli/args'
 require_relative 'cli/help'
+require_relative 'cli/script'
 
 module Cli
   OK = 0

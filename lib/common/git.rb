@@ -18,9 +18,11 @@ module Git
       raise error, failure(args, result, message)
     end
 
-    def out(dir, *args, **opts)
+    def out(dir, *args, strip: true, **opts)
       result = run(dir, *args, **opts)
-      result.out.strip if result.ok?
+      return unless result.ok?
+
+      strip ? result.out.strip : result.out
     end
 
     def ok?(dir, *args, **opts)

@@ -60,6 +60,12 @@ class GitTest < Minitest::Test
     assert_nil Git.out(@repo, 'rev-parse', '--verify', '-q', 'nope')
   end
 
+  def test_out_keeps_the_bytes_when_asked
+    commit_file('b.txt', "  indented\n\n", 'Second')
+    assert_equal "  indented\n\n", Git.out(@repo, 'show', 'HEAD:b.txt', strip: false)
+    assert_nil Git.out(@repo, 'show', 'HEAD:nope', strip: false)
+  end
+
   def test_ok
     assert Git.ok?(@repo, 'rev-parse', 'HEAD')
     refute Git.ok?(@repo, 'rev-parse', '--verify', '-q', 'nope')
