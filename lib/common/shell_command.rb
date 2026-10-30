@@ -2,6 +2,7 @@
 
 require 'shellwords'
 require_relative 'git'
+require_relative 'paths'
 
 class ShellCommand
   # A heredoc body is data only if its consumer can't execute it — `bash <<'SH'` hides a real commit.
@@ -19,13 +20,51 @@ class ShellCommand
   # `g` is the zsh alias for git that the Bash tool's shell carries
   GIT_WORDS = %w[git g].freeze
 
+  ENV_ASSIGN = /\A\w+=/.freeze
+  WRAPPERS = %w[env sudo doas nohup timeout command stdbuf nice ionice time noglob xargs].freeze
+  DURATION = /\A\d+(\.\d+)?[smhd]?\z/.freeze
+  KEYWORDS = %w[if then elif else do while until !].freeze
+  SHELLS = %w[bash sh zsh ksh dash].freeze
+  INLINE_CODE_FLAG = /\A-{1,2}(c|e|E|eval|command)\z/.freeze
+  SHELL_CODE_FLAG = /\A-[a-zA-Z]*c[a-zA-Z]*\z/.freeze
+
+  GIT_OPTIONS = {
+    '-C' => :dir, '-c' => :override, '--exec-path' => :value, '--config-env' => :value, '--super-prefix' => :value,
+    '--git-dir' => :mover, '--work-tree' => :mover, '--namespace' => :mover
+  }.freeze
+  REPO_ENV = /\AGIT_(DIR|WORK_TREE|COMMON_DIR|NAMESPACE|CONFIG\w*)=/.freeze
+
   Heredoc = Struct.new(:delim, :dash, :owner, :body, :executable, keyword_init: true) do
     def executable?
       executable
     end
   end
 
+  GitInvocation = Struct.new(:sub, :args, :raw_args, :dir, :overrides, :unresolved, keyword_init: true)
+
   attr_reader :raw, :heredocs
+
+  def self.basename(tok)
+    tok.to_s.split('/').last.to_s
+  end
+
+  def self.strip_prefix(tokens, flags: true)
+    tokens.drop_while do |t|
+      t.match?(ENV_ASSIGN) || WRAPPERS.include?(basename(t)) || t.match?(DURATION) || (flags && t.start_with?('-'))
+    end
+  end
+
+  def self.inline_code(tokens, flag = INLINE_CODE_FLAG)
+    tokens.each_with_index do |tok, i|
+      return tokens[i + 1] if tok.match?(flag) && tokens[i + 1]
+    end
+    nil
+  end
+
+  def self.git_builtin?(sub)
+    @git_builtins ||= Git.out(nil, '--list-cmds=builtins').to_s.split("\n")
+    @git_builtins.include?(sub)
+  end
 
   def self.git_aliases(dir, overrides = [])
     Git.aliases(dir: dir, overrides: overrides)
@@ -117,7 +156,89 @@ class ShellCommand
     s
   end
 
+  def git_invocations(dir:, hops: 5, walk: false)
+    walk_git(dir, hops: hops, walk: walk, depth: 0)
+  end
+
+  protected
+
+  def walk_git(dir, hops:, walk:, depth:)
+    commands.flat_map do |raw_tokens|
+      toks = raw_tokens.dup
+      toks[0] = toks[0].sub(/\A[({]+/, '')
+      toks[-1] = toks[-1].sub(/[)}]+\z/, '') unless toks[-1].start_with?('"', "'")
+      toks = toks.reject(&:empty?).drop_while { |t| KEYWORDS.include?(t) }
+      words = ShellCommand.strip_prefix(toks)
+      next [] if words.empty?
+
+      name = ShellCommand.basename(unquote(words.first))
+      if %w[cd pushd].include?(name)
+        dir = cd_target(words, dir, walk)
+        []
+      elsif GIT_WORDS.include?(name)
+        moved = toks[0, toks.length - words.length].any? { |t| t.match?(REPO_ENV) }
+        unresolved = 'a GIT_DIR / GIT_CONFIG style variable moves the repository this guard would read' if moved
+        resolve_git(words[1..], dir, [], unresolved, hops: hops, walk: walk, depth: depth)
+      elsif SHELLS.include?(name) && depth < hops && (code = ShellCommand.inline_code(words, SHELL_CODE_FLAG))
+        ShellCommand.new(unquote(code)).walk_git(dir, hops: hops, walk: walk, depth: depth + 1)
+      else
+        []
+      end
+    end
+  end
+
+  def resolve_git(args, dir, overrides, unresolved, hops:, walk:, depth:)
+    i = 0
+    while i < args.length
+      tok = unquote(args[i])
+      opt, inline = tok.start_with?('--') ? tok.split('=', 2) : [tok, nil]
+      kind = GIT_OPTIONS[opt]
+      break if kind.nil? && !tok.start_with?('-')
+
+      value = inline || unquote(args[i + 1])
+      case kind
+      when :dir then dir = dir && Paths.canonical(value, base: dir, walk: walk)
+      when :override then overrides += [value]
+      when :mover then unresolved ||= "`git #{tok}` moves the repository this guard would read"
+      end
+      i += kind.nil? || inline ? 1 : 2
+    end
+    sub = args[i] && unquote(args[i])
+    rest = args[(i + 1)..] || []
+    body = sub && Git.aliases(dir: dir, overrides: overrides)[sub.downcase]
+    return [invocation(sub, rest, dir, overrides, unresolved)] if body.nil? || ShellCommand.git_builtin?(sub)
+
+    too_deep = "git alias `#{sub}` nests too deep to follow"
+    return [invocation(sub, rest, dir, overrides, unresolved || too_deep)] if depth >= hops
+
+    plain = rest.map { |a| unquote(a) }
+    if body.start_with?('!')
+      shell = [body[1..], *plain.map { |a| Shellwords.escape(a) }].join(' ')
+      return ShellCommand.new(shell).walk_git(dir, hops: hops, walk: walk, depth: depth + 1)
+    end
+
+    begin
+      expanded = Shellwords.split(body)
+    rescue ArgumentError => e
+      return [invocation(sub, rest, dir, overrides, unresolved || "git alias `#{sub}` could not be split: #{e.message}")]
+    end
+    resolve_git(expanded + plain, dir, overrides, unresolved, hops: hops, walk: walk, depth: depth + 1)
+  end
+
   private
+
+  def invocation(sub, rest, dir, overrides, unresolved)
+    GitInvocation.new(sub: sub, args: rest.map { |a| unquote(a) }, raw_args: rest, dir: dir,
+                      overrides: overrides, unresolved: unresolved)
+  end
+
+  def cd_target(words, dir, walk)
+    target = words[1..].map { |t| unquote(t) }.reject { |t| %w[-P -L -e -@].include?(t) }.first
+    return Dir.home if target.nil?
+    return nil if dir.nil? || target == '-'
+
+    Paths.canonical(target, base: dir, walk: walk)
+  end
 
   def build_code
     out = []

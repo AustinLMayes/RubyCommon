@@ -202,4 +202,178 @@ class ShellCommandTest < Minitest::Test
     parsed = ShellCommand.new(%(git -c alias.pu='push -u origin HEAD' pu))
     assert_equal 'alias.pu=push -u origin HEAD', parsed.unquote(parsed.commands.first[2])
   end
+
+  def test_strip_prefix_drops_env_wrappers_their_flags_and_durations
+    assert_equal %w[git status], ShellCommand.strip_prefix(%w[FOO=1 timeout 5s nice -n 10 git status])
+    assert_equal %w[git push], ShellCommand.strip_prefix(%w[/usr/bin/env A=b noglob stdbuf -oL git push])
+    assert_equal %w[git log], ShellCommand.strip_prefix(%w[doas xargs -n 1 git log])
+    assert_equal %w[make], ShellCommand.strip_prefix(%w[timeout 1.5m make])
+  end
+
+  def test_strip_prefix_without_flags_keeps_a_leading_flag
+    assert_equal %w[-x kubectl], ShellCommand.strip_prefix(%w[sudo -x kubectl], flags: false)
+    assert_equal %w[kubectl], ShellCommand.strip_prefix(%w[FOO=1 timeout 30 kubectl], flags: false)
+  end
+
+  def test_strip_prefix_of_nothing_but_wrappers_is_empty
+    assert_empty ShellCommand.strip_prefix(%w[env FOO=1])
+  end
+
+  def test_inline_code_takes_the_word_after_the_flag
+    assert_equal '"puts 1"', ShellCommand.inline_code(['ruby', '-e', '"puts 1"'])
+    assert_equal 'x', ShellCommand.inline_code(%w[python3 --command x])
+    assert_nil ShellCommand.inline_code(%w[ruby -e])
+    assert_nil ShellCommand.inline_code(%w[bash -lc x])
+    assert_equal 'x', ShellCommand.inline_code(%w[bash -lc x], ShellCommand::SHELL_CODE_FLAG)
+  end
+
+  def test_basename
+    assert_equal 'git', ShellCommand.basename('/usr/bin/git')
+    assert_equal 'git', ShellCommand.basename('git')
+    assert_equal '', ShellCommand.basename(nil)
+  end
+
+  def invocations(cmd, dir, **opts)
+    ShellCommand.new(cmd).git_invocations(dir: dir, **opts).map(&:to_h)
+  end
+
+  def test_git_invocation_reads_dir_and_overrides
+    with_repo do |dir|
+      sub = File.join(dir, 'sub')
+      Dir.mkdir(sub)
+      found = invocations('git -C sub -c core.x=1 --no-pager status -s', dir)
+      assert_equal [{ sub: 'status', args: ['-s'], raw_args: ['-s'], dir: File.realpath(sub),
+                      overrides: ['core.x=1'], unresolved: nil }], found
+    end
+  end
+
+  def test_git_invocation_follows_a_plain_alias
+    with_repo do |dir|
+      found = invocations('git pu --dry-run', dir).first
+      assert_equal 'push', found[:sub]
+      assert_equal %w[-u origin HEAD --dry-run], found[:args]
+    end
+  end
+
+  def test_git_invocation_follows_the_g_word_and_an_alias_with_global_options
+    with_repo do |dir|
+      system('git', '-C', dir, 'config', 'alias.cpu', '-c push.default=current push', exception: true)
+      found = invocations('g cpu', dir).first
+      assert_equal 'push', found[:sub]
+      assert_equal ['push.default=current'], found[:overrides]
+    end
+  end
+
+  def test_git_invocation_recurses_into_a_shell_alias
+    with_repo do |dir|
+      found = invocations('git del austin/x', dir)
+      assert_equal [%w[branch -D $1], %w[push -d origin austin/x]], found.map { |f| [f[:sub], *f[:args]] }
+    end
+  end
+
+  def test_git_invocation_sees_a_command_line_alias
+    with_repo do |dir|
+      found = invocations("git -c alias.sneak='push origin main' sneak", dir).first
+      assert_equal ['push', %w[origin main]], [found[:sub], found[:args]]
+    end
+  end
+
+  def test_git_invocation_tracks_cd_for_the_alias_lookup
+    with_repo do |dir|
+      system('git', '-C', dir, 'config', 'alias.onlyhere', 'push', exception: true)
+      Dir.mktmpdir('elsewhere') do |other|
+        assert_equal 'onlyhere', invocations('git onlyhere', other).first[:sub]
+        found = invocations("cd #{dir} && git onlyhere", other).first
+        assert_equal ['push', File.realpath(dir)], [found[:sub], found[:dir]]
+        assert_equal 'push', invocations("(cd #{dir} && git onlyhere)", other).first[:sub]
+      end
+    end
+  end
+
+  def test_git_invocation_cd_without_a_knowable_target
+    with_repo do |dir|
+      assert_nil invocations('cd - && git status', dir).first[:dir]
+      assert_equal Dir.home, invocations('cd && git status', dir).first[:dir]
+      assert_nil invocations('cd "$X" && git status', dir).first[:dir]
+      assert_nil invocations('git -C $X status', dir).first[:dir]
+    end
+  end
+
+  def test_git_invocation_walk_resolves_a_missing_path_under_a_real_parent
+    Dir.mktmpdir('walk') do |dir|
+      link = File.join(dir, 'link')
+      File.symlink(dir, link)
+      assert_equal File.join(link, 'gone'), invocations('git -C gone status', link).first[:dir]
+      assert_equal File.join(File.realpath(dir), 'gone'), invocations('git -C gone status', link, walk: true).first[:dir]
+    end
+  end
+
+  def test_git_invocation_recurses_into_bash_c
+    with_repo do |dir|
+      found = invocations(%(bash -lc "git -C #{dir} pu"), Dir.home)
+      assert_equal ['push', File.realpath(dir)], [found.first[:sub], found.first[:dir]]
+    end
+  end
+
+  def test_git_invocation_skips_keywords_and_wrappers
+    with_repo do |dir|
+      assert_equal %w[push], invocations('if timeout 5 git pu; then echo ok; fi', dir).map { |f| f[:sub] }
+    end
+  end
+
+  def test_git_invocation_keeps_raw_args_alongside_unquoted_ones
+    with_repo do |dir|
+      found = invocations('git commit -m "$(cat f)"', dir).first
+      assert_equal ['-m', '"$(cat f)"'], found[:raw_args]
+      assert_equal ['-m', '$(cat f)'], found[:args]
+    end
+  end
+
+  def test_git_invocation_flags_a_repo_mover_but_still_reads_the_subcommand
+    with_repo do |dir|
+      found = invocations('git --git-dir=/x status', dir).first
+      assert_equal ['status', '`git --git-dir=/x` moves the repository this guard would read'],
+                   [found[:sub], found[:unresolved]]
+      found = invocations('git --work-tree /x status', dir).first
+      assert_equal ['status', '`git --work-tree` moves the repository this guard would read'],
+                   [found[:sub], found[:unresolved]]
+      found = invocations('GIT_DIR=/x git status', dir).first
+      assert_equal 'a GIT_DIR / GIT_CONFIG style variable moves the repository this guard would read', found[:unresolved]
+    end
+  end
+
+  def test_git_invocation_gives_up_on_an_alias_chain_past_the_hops
+    with_repo do |dir|
+      system('git', '-C', dir, 'config', 'alias.a1', 'a2', exception: true)
+      system('git', '-C', dir, 'config', 'alias.a2', 'pu', exception: true)
+      system('git', '-C', dir, 'config', 'alias.loop', 'loop', exception: true)
+      assert_equal 'push', invocations('git a1', dir).first[:sub]
+      found = invocations('git a1', dir, hops: 1).first
+      assert_equal ['a2', 'git alias `a2` nests too deep to follow'], [found[:sub], found[:unresolved]]
+      assert_equal 'git alias `loop` nests too deep to follow', invocations('git loop', dir).first[:unresolved]
+    end
+  end
+
+  def test_git_invocation_reports_an_alias_it_cannot_split
+    with_repo do |dir|
+      system('git', '-C', dir, 'config', 'alias.bad', "push 'oops", exception: true)
+      found = invocations('git bad', dir).first
+      assert_equal 'bad', found[:sub]
+      assert_match(/\Agit alias `bad` could not be split: /, found[:unresolved])
+    end
+  end
+
+  def test_git_invocation_ignores_an_alias_shadowing_a_builtin
+    with_repo do |dir|
+      system('git', '-C', dir, 'config', 'alias.status', 'push', exception: true)
+      assert_equal 'status', invocations('git status', dir).first[:sub]
+    end
+  end
+
+  def test_git_invocation_without_a_subcommand_or_without_git
+    with_repo do |dir|
+      assert_equal [nil], invocations('git --version', dir).map { |f| f[:sub] }
+      assert_empty invocations('ls -la && echo git push', dir)
+    end
+  end
 end
