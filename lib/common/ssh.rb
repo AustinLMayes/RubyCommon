@@ -8,12 +8,12 @@ module Ssh
 
   HOST_KEY_FAILED = "Host key verification failed"
 
-  def run(host, cmd, batch: true, connect_timeout: 10, via: nil, **opts)
-    Command.run("ssh", *options(batch: batch, connect_timeout: connect_timeout, via: via), target(host), remote(cmd), **opts)
+  def run(host, cmd, batch: true, connect_timeout: 10, via: nil, identity: nil, **opts)
+    Command.run("ssh", *options(batch: batch, connect_timeout: connect_timeout, via: via, identity: identity), target(host), remote(cmd), **opts)
   end
 
-  def options(batch: true, connect_timeout: 10, via: nil)
-    opts = []
+  def options(batch: true, connect_timeout: 10, via: nil, identity: nil)
+    opts = identity ? ["-i", identity] : []
     opts.push("-o", "BatchMode=yes") if batch
     opts.push("-o", "ConnectTimeout=#{connect_timeout}") if connect_timeout
     opts.push("-J", target(via)) if via

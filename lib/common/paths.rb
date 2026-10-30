@@ -31,6 +31,12 @@ module Paths
     ENV['ZIAX_UTILS'] || File.join(Dir.home, 'Projects/Ruby/ZiaxUtils')
   end
 
+  def self.job_tmp(*fallback)
+    require 'tmpdir'
+    job = ENV['CLAUDE_JOB_DIR'].to_s
+    job.empty? ? File.join(Dir.tmpdir, *fallback) : File.join(job, 'tmp')
+  end
+
   def self.ziax(*parts)
     File.join(Dir.home, 'Projects/Java/Ziax', *parts)
   end

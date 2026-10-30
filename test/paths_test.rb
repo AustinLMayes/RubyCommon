@@ -65,6 +65,18 @@ class PathsTest < Minitest::Test
     end
   end
 
+  def test_job_tmp_is_the_job_dir_else_under_the_system_tmp
+    old = ENV['CLAUDE_JOB_DIR']
+    ENV['CLAUDE_JOB_DIR'] = '/jobs/x'
+    assert_equal '/jobs/x/tmp', Paths.job_tmp('pr-test-sweep')
+    ENV['CLAUDE_JOB_DIR'] = ''
+    assert_equal File.join(Dir.tmpdir, 'pr-test-sweep'), Paths.job_tmp('pr-test-sweep')
+    ENV.delete('CLAUDE_JOB_DIR')
+    assert_equal Dir.tmpdir, Paths.job_tmp
+  ensure
+    old ? ENV['CLAUDE_JOB_DIR'] = old : ENV.delete('CLAUDE_JOB_DIR')
+  end
+
   def test_ziax_joins_under_the_checkouts
     assert_equal File.join(Dir.home, 'Projects/Java/Ziax'), Paths.ziax
     assert_equal File.join(Dir.home, 'Projects/Java/Ziax/cubecraft'), Paths.ziax('cubecraft')

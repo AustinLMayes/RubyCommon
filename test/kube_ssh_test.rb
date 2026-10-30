@@ -58,6 +58,12 @@ class KubeSshTest < Minitest::Test
     assert_equal 'x', calls[0][1][:stdin]
   end
 
+  def test_ssh_puts_an_identity_first
+    calls = record
+    Ssh.run('vyos@10.0.0.1', 'vbash -s', connect_timeout: nil, identity: '/k')
+    assert_equal ['ssh', '-i', '/k', '-o', 'BatchMode=yes', 'vyos@10.0.0.1', 'vbash -s'], calls[0][0]
+  end
+
   def test_ssh_quotes_an_array_command_and_passes_a_string_as_a_script
     calls = record
     Ssh.run('h', ['docker', 'stop', 'a; rm -rf /'])

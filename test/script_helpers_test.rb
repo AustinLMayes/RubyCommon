@@ -70,6 +70,7 @@ class ScriptHelpersTest < Minitest::Test
     assert response.ok?
     assert_equal [{ "id" => 1 }], response.json
     assert_includes calls[0], "Authorization: token tok"
+    assert_equal %w[--max-time 30], calls[0][2, 2]
     assert_equal "#{Bugsnag::API}/projects/#{Bugsnag::PROJECT}/errors?per_page=1", calls[0].last
   end
 
@@ -94,6 +95,13 @@ class ScriptHelpersTest < Minitest::Test
     ENV["BUGSNAG_API_KEY"] = "tok"
     curl(["\n000", false])
     refute Bugsnag.get("/x").ok?
+  end
+
+  def test_bugsnag_get_takes_a_max_time
+    ENV["BUGSNAG_API_KEY"] = "tok"
+    calls = curl(["{}\n200"])
+    Bugsnag.get("/x", max_time: 5)
+    assert_equal %w[--max-time 5], calls[0][2, 2]
   end
 
   def test_bugsnag_get_without_a_token_raises

@@ -11,6 +11,7 @@ module Bugsnag
   PROJECT = "5686a91877656272b700006e"
   API = "https://api.bugsnag.com"
   TRIES = 6
+  MAX_TIME = 30
 
   class Error < StandardError; end
 
@@ -25,11 +26,11 @@ module Bugsnag
     params.empty? ? "#{API}#{path}" : "#{API}#{path}?#{URI.encode_www_form(params)}"
   end
 
-  def get(path, params = [], tries: TRIES, pause: true)
+  def get(path, params = [], tries: TRIES, pause: true, max_time: MAX_TIME)
     key = token or raise Error, "no BUGSNAG_API_KEY in the env or ~/.extra"
     tries.times do |attempt|
-      result = Command.run("curl", "-s", "-w", "\n%{http_code}", "-H", "Authorization: token #{key}",
-                           "-H", "X-Version: 2", url(path, params))
+      result = Command.run("curl", "-s", "--max-time", max_time.to_s, "-w", "\n%{http_code}",
+                           "-H", "Authorization: token #{key}", "-H", "X-Version: 2", url(path, params))
       body, _, code = result.out.rpartition("\n")
       return Response.new(code, body, result.ok?) unless code == "429" || body.include?("rate limit exceeded")
 
