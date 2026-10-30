@@ -40,7 +40,8 @@ class ShellCommand
     end
   end
 
-  GitInvocation = Struct.new(:sub, :args, :raw_args, :dir, :overrides, :unresolved, keyword_init: true)
+  GitInvocation = Struct.new(:sub, :args, :raw_args, :dir, :overrides, :unresolved, :segment, :at, :cwd,
+                             keyword_init: true)
 
   attr_reader :raw, :heredocs
 
@@ -156,13 +157,13 @@ class ShellCommand
     s
   end
 
-  def git_invocations(dir:, hops: 5, walk: false)
-    walk_git(dir, hops: hops, walk: walk, depth: 0)
+  def git_invocations(dir:, hops: 5, walk: false, &other)
+    walk_git(dir, hops: hops, walk: walk, depth: 0, &other)
   end
 
   protected
 
-  def walk_git(dir, hops:, walk:, depth:)
+  def walk_git(dir, hops:, walk:, depth:, &other)
     commands.flat_map do |raw_tokens|
       toks = raw_tokens.dup
       toks[0] = toks[0].sub(/\A[({]+/, '')
@@ -178,16 +179,18 @@ class ShellCommand
       elsif GIT_WORDS.include?(name)
         moved = toks[0, toks.length - words.length].any? { |t| t.match?(REPO_ENV) }
         unresolved = 'a GIT_DIR / GIT_CONFIG style variable moves the repository this guard would read' if moved
-        resolve_git(words[1..], dir, [], unresolved, hops: hops, walk: walk, depth: depth)
+        site = { segment: toks, cwd: dir, at: toks.length - words.length + 1 }
+        resolve_git(words[1..], dir, [], unresolved, hops: hops, walk: walk, depth: depth, site: site, typed: true, &other)
       elsif SHELLS.include?(name) && depth < hops && (code = ShellCommand.inline_code(words, SHELL_CODE_FLAG))
-        ShellCommand.new(unquote(code)).walk_git(dir, hops: hops, walk: walk, depth: depth + 1)
+        ShellCommand.new(unquote(code)).walk_git(dir, hops: hops, walk: walk, depth: depth + 1, &other)
       else
+        other&.call(words.map { |t| unquote(t) }, dir)
         []
       end
     end
   end
 
-  def resolve_git(args, dir, overrides, unresolved, hops:, walk:, depth:)
+  def resolve_git(args, dir, overrides, unresolved, hops:, walk:, depth:, site:, typed: false, &other)
     i = 0
     while i < args.length
       tok = unquote(args[i])
@@ -203,33 +206,35 @@ class ShellCommand
       end
       i += kind.nil? || inline ? 1 : 2
     end
+    site = site.merge(at: site[:at] + i) if typed
     sub = args[i] && unquote(args[i])
     rest = args[(i + 1)..] || []
     body = sub && Git.aliases(dir: dir, overrides: overrides)[sub.downcase]
-    return [invocation(sub, rest, dir, overrides, unresolved)] if body.nil? || ShellCommand.git_builtin?(sub)
+    return [invocation(sub, rest, dir, overrides, unresolved, site)] if body.nil? || ShellCommand.git_builtin?(sub)
 
     too_deep = "git alias `#{sub}` nests too deep to follow"
-    return [invocation(sub, rest, dir, overrides, unresolved || too_deep)] if depth >= hops
+    return [invocation(sub, rest, dir, overrides, unresolved || too_deep, site)] if depth >= hops
 
     plain = rest.map { |a| unquote(a) }
     if body.start_with?('!')
       shell = [body[1..], *plain.map { |a| Shellwords.escape(a) }].join(' ')
-      return ShellCommand.new(shell).walk_git(dir, hops: hops, walk: walk, depth: depth + 1)
+      return ShellCommand.new(shell).walk_git(dir, hops: hops, walk: walk, depth: depth + 1, &other)
     end
 
     begin
       expanded = Shellwords.split(body)
     rescue ArgumentError => e
-      return [invocation(sub, rest, dir, overrides, unresolved || "git alias `#{sub}` could not be split: #{e.message}")]
+      return [invocation(sub, rest, dir, overrides, unresolved || "git alias `#{sub}` could not be split: #{e.message}", site)]
     end
-    resolve_git(expanded + plain, dir, overrides, unresolved, hops: hops, walk: walk, depth: depth + 1)
+    resolve_git(expanded + plain, dir, overrides, unresolved, hops: hops, walk: walk, depth: depth + 1, site: site, &other)
   end
 
   private
 
-  def invocation(sub, rest, dir, overrides, unresolved)
+  def invocation(sub, rest, dir, overrides, unresolved, site)
     GitInvocation.new(sub: sub, args: rest.map { |a| unquote(a) }, raw_args: rest, dir: dir,
-                      overrides: overrides, unresolved: unresolved)
+                      overrides: overrides, unresolved: unresolved, segment: site[:segment],
+                      at: sub && site[:at], cwd: site[:cwd])
   end
 
   def cd_target(words, dir, walk)

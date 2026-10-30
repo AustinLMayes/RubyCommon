@@ -243,7 +243,8 @@ class ShellCommandTest < Minitest::Test
       Dir.mkdir(sub)
       found = invocations('git -C sub -c core.x=1 --no-pager status -s', dir)
       assert_equal [{ sub: 'status', args: ['-s'], raw_args: ['-s'], dir: File.realpath(sub),
-                      overrides: ['core.x=1'], unresolved: nil }], found
+                      overrides: ['core.x=1'], unresolved: nil,
+                      segment: %w[git -C sub -c core.x=1 --no-pager status -s], at: 6, cwd: dir }], found
     end
   end
 
@@ -376,4 +377,33 @@ class ShellCommandTest < Minitest::Test
       assert_empty invocations('ls -la && echo git push', dir)
     end
   end
+
+def test_git_invocation_keeps_the_typed_segment_its_subcommand_and_the_shell_dir
+  with_repo do |dir|
+    Dir.mkdir(File.join(dir, 'sub'))
+    found = invocations('cd sub && FOO=1 git -C .. checkout -b "a b"', dir).first
+    assert_equal [["FOO=1", "git", "-C", "..", "checkout", "-b", %("a b")], 4, File.realpath(File.join(dir, 'sub')), File.realpath(dir)],
+                 [found[:segment], found[:at], found[:cwd], found[:dir]]
+    assert_nil invocations('git --version', dir).first[:at]
+  end
+end
+
+def test_git_invocation_keeps_the_typed_alias_word_as_its_subcommand
+  with_repo do |dir|
+    found = invocations('git -c a.b=1 pu --dry-run', dir).first
+    assert_equal ['push', %w[git -c a.b=1 pu --dry-run], 3], [found[:sub], found[:segment], found[:at]]
+    found = invocations('git del austin/x', dir).last
+    assert_equal [%w[git push -d origin austin/x], 1], [found[:segment], found[:at]]
+  end
+end
+
+def test_git_invocation_hands_every_other_command_to_the_block
+  with_repo do |dir|
+    seen = []
+    found = ShellCommand.new(%(nice rm -f x && cd #{dir} && git multi && bash -c "touch 'a b'")).git_invocations(dir: Dir.home) { |words, at| seen << [words, at] }
+    assert_empty found
+    real = File.realpath(dir)
+    assert_equal [[%w[rm -f x], Dir.home], [%w[echo one], real], [%w[echo two], real], [['touch', 'a b'], real]], seen
+  end
+end
 end
