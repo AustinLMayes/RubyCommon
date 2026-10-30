@@ -10,6 +10,10 @@ require 'fileutils'
 class OnceGate
   DEFAULT_TTL = 24 * 60 * 60
 
+  def self.for(name, env:, **opts)
+    new(dir: ENV[env] || File.join(Dir.home, '.cache', name), **opts)
+  end
+
   def initialize(dir:, ttl: DEFAULT_TTL, filename: 'pending.json')
     @dir = File.expand_path(dir.to_s)
     @path = File.join(@dir, filename)

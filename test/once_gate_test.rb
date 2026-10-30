@@ -87,3 +87,37 @@ class OnceGateTest < Minitest::Test
     refute_equal OnceGate.key('ab', 'c'), OnceGate.key('a', 'bc')
   end
 end
+
+class OnceGateForTest < Minitest::Test
+  def setup
+    @home = Dir.mktmpdir('once-gate-home')
+    @env = ENV.to_h.slice('HOME', 'ONCE_GATE_TEST_DIR')
+  end
+
+  def teardown
+    @env.each { |k, v| ENV[k] = v }
+    ENV.delete('ONCE_GATE_TEST_DIR') unless @env.key?('ONCE_GATE_TEST_DIR')
+    FileUtils.remove_entry(@home)
+  end
+
+  def test_the_env_var_wins
+    ENV['ONCE_GATE_TEST_DIR'] = File.join(@home, 'from-env')
+    OnceGate.for('some-guard', env: 'ONCE_GATE_TEST_DIR').claim(['k'])
+    assert_path_exists File.join(@home, 'from-env', 'pending.json')
+  end
+
+  def test_without_it_the_store_is_under_the_home_cache
+    ENV.delete('ONCE_GATE_TEST_DIR')
+    ENV['HOME'] = @home
+    OnceGate.for('some-guard', env: 'ONCE_GATE_TEST_DIR').claim(['k'])
+    assert_path_exists File.join(@home, '.cache', 'some-guard', 'pending.json')
+  end
+
+  def test_options_pass_through
+    ENV['ONCE_GATE_TEST_DIR'] = @home
+    gate = OnceGate.for('g', env: 'ONCE_GATE_TEST_DIR', filename: 'held.json', ttl: -1)
+    gate.claim(['k'])
+    assert_path_exists File.join(@home, 'held.json')
+    assert_equal ['k'], gate.claim(['k'])
+  end
+end
