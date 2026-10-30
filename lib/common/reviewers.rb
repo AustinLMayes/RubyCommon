@@ -1,4 +1,5 @@
 require "json"
+require_relative "github"
 
 # Per-org shorthand → real-handle maps for reviewer / team references.
 #
@@ -105,7 +106,7 @@ module Reviewers
   end
 
   def build_team_shorthands(org)
-    slugs = JSON.parse(`gh api orgs/#{org}/teams --paginate`).map { |t| t["slug"] }.sort
+    slugs = GitHub.gh("api", "orgs/#{org}/teams", "--paginate", json: true).map { |t| t["slug"] }.sort
     result = {}
     slugs.each do |slug|
       [team_short_candidate(slug), slug].uniq.each do |candidate|
@@ -118,12 +119,12 @@ module Reviewers
   end
 
   def build_user_shorthands(org)
-    logins = JSON.parse(`gh api orgs/#{org}/members --paginate`)
+    logins = GitHub.gh("api", "orgs/#{org}/members", "--paginate", json: true)
       .map { |m| m["login"] }
       .reject { |l| l.start_with?("ziax-") && l.end_with?("-robot") }
     result = {}
     logins.sort.each do |login|
-      name = JSON.parse(`gh api users/#{login}`)["name"].to_s.strip
+      name = GitHub.gh("api", "users/#{login}", json: true)["name"].to_s.strip
       candidate = name.empty? ? login.downcase.gsub(/\d+$/, "") : name.split(/\s+/).first.downcase
       [candidate, login.downcase].each do |c|
         next if result.key?(c)

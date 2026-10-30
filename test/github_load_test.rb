@@ -35,6 +35,14 @@ class GitHubLoadTest < Minitest::Test
     end
   end
 
+  def test_loading_github_leaves_octokit_unloaded_until_a_client_is_needed
+    lib = File.expand_path("../lib", __dir__)
+    probe = 'require "common/github"; print defined?(Octokit) ? "loaded" : "lazy"; ' \
+            'GitHub.define_singleton_method(:get_auth_token) { "t" }; GitHub.get_client; print " ", Octokit::Client.name'
+    out = IO.popen([RbConfig.ruby, "-I#{lib}", "-e", probe], err: File::NULL, &:read)
+    assert_equal "lazy Octokit::Client", out
+  end
+
   # The complement — without it, deleting the call entirely would pass the check above.
   def test_the_username_is_still_available_when_something_asks_for_it
     with_recording_path do |dir, log|

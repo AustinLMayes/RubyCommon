@@ -1,8 +1,6 @@
 require_relative "logging"
 require_relative "git"
 require 'json'
-require 'octokit'
-require 'shellwords'
 
 module GitHub
     extend self
@@ -14,83 +12,84 @@ module GitHub
     # ran, invisible to that suite's sandbox because nothing is armed at require time. It also
     # meant the library could not load at all without an authenticated `gh`.
     def github_username
-      @github_username ||= `gh api user | jq -r .login`.strip
+      @github_username ||= gh("api", "user", "--jq", ".login").out.strip
     end
 
-    def make_pr(title, body: " ", base: nil, suffix: "", head: nil, draft: false)
+    def gh(*args, json: false, stderr: :inherit, **opts)
+      result = begin
+        Command.run("gh", *args, stderr: stderr, **opts)
+      rescue Command::Unavailable => e
+        Command::Result.new(+"", e.message, nil, false)
+      end
+      json ? JSON.parse(result.out) : result
+    end
+
+    def make_pr(title, body: " ", base: nil, suffix: "", head: nil, draft: false, repo: nil)
       base = "production" unless base
       head ||= Git.current_branch
       full_title = "#{title} #{suffix}".strip
       info "Making PR for #{head} based off of #{base} with title #{full_title.inspect}"
-      repo = Git.repo_name_with_org
-      out = `gh api repos/#{repo}/pulls -X POST \
-        -f title=#{full_title.shellescape} \
-        -f head=#{head.shellescape} \
-        -f base=#{base.shellescape} \
-        -F draft=#{draft} \
-        -f body=#{body.to_s.shellescape} 2>&1`
-      error "Failed to create PR: #{out.strip[0, 300]}" unless $?.success?
-      num = JSON.parse(out)["number"].to_s
-      forget_pr_number(head)
+      result = gh("api", "repos/#{repo || Git.repo_name_with_org}/pulls", "-X", "POST",
+                  "-f", "title=#{full_title}",
+                  "-f", "head=#{head}",
+                  "-f", "base=#{base}",
+                  "-F", "draft=#{draft}",
+                  "-f", "body=#{body}", stderr: :merge)
+      error "Failed to create PR: #{result.out.strip[0, 300]}" unless result.ok?
+      num = JSON.parse(result.out)["number"].to_s
+      forget_pr_number(head, repo: repo)
       num
     end
 
-    def change_pr_title(branch, title)
-      num = get_pr_number(branch, only_mine: false)
-      error "No PR found for #{branch}" if num.nil? || num.empty?
+    def change_pr_title(branch, title, repo: nil)
+      num, repo = pr_for(branch, repo)
       info "Setting PR title to #{title.inspect} on ##{num}"
-      out = `gh api repos/#{Git.repo_name_with_org}/pulls/#{num} -X PATCH -f title=#{title.shellescape} 2>&1`
-      error "Failed to change PR title: #{out.strip[0, 200]}" unless $?.success?
+      patch_pr(repo, num, "title", title)
     end
 
-    def change_pr_body(branch, body)
-      num = get_pr_number(branch, only_mine: false)
-      error "No PR found for #{branch}" if num.nil? || num.empty?
+    def change_pr_body(branch, body, repo: nil)
+      num, repo = pr_for(branch, repo)
       info "Setting PR body on ##{num}"
-      out = `gh api repos/#{Git.repo_name_with_org}/pulls/#{num} -X PATCH -f body=#{body.to_s.shellescape} 2>&1`
-      error "Failed to change PR body: #{out.strip[0, 200]}" unless $?.success?
+      patch_pr(repo, num, "body", body)
     end
 
-    def change_pr_base(branch, base)
-      num = get_pr_number(branch, only_mine: false)
-      error "No PR found for #{branch}" if num.nil? || num.empty?
+    def change_pr_base(branch, base, repo: nil)
+      num, repo = pr_for(branch, repo)
       info "Setting PR base to #{base} on ##{num}"
-      out = `gh api repos/#{Git.repo_name_with_org}/pulls/#{num} -X PATCH -f base=#{base.shellescape} 2>&1`
-      error "Failed to change PR base: #{out.strip[0, 200]}" unless $?.success?
+      patch_pr(repo, num, "base", base)
     end
 
-    def get_pr_number(branch, only_mine: true)
-      repo = Git.repo_name_with_org
+    def get_pr_number(branch, only_mine: true, repo: nil)
+      repo ||= Git.repo_name_with_org
       owner = repo.split("/").first
       url = "repos/#{repo}/pulls?head=#{owner}:#{branch}&state=open&per_page=100"
-      out = `gh api '#{url}' 2>/dev/null`
+      out = gh("api", url, stderr: :discard).out
       return nil if out.strip.empty?
       prs = JSON.parse(out)
       prs = prs.select { |p| p.dig("user", "login") == github_username } if only_mine
       prs.empty? ? nil : prs.first["number"].to_s
     end
 
-    def open_pr_number(branch)
+    def open_pr_number(branch, repo: nil)
       @open_pr_numbers ||= {}
-      return @open_pr_numbers[branch] if @open_pr_numbers.key?(branch)
-      num = get_pr_number(branch, only_mine: false)
-      @open_pr_numbers[branch] = num.nil? ? nil : num.to_i
+      key = [repo, branch]
+      return @open_pr_numbers[key] if @open_pr_numbers.key?(key)
+      num = get_pr_number(branch, only_mine: false, repo: repo)
+      @open_pr_numbers[key] = num.nil? ? nil : num.to_i
     end
 
-    def forget_pr_number(branch)
-      @open_pr_numbers&.delete(branch)
+    def forget_pr_number(branch, repo: nil)
+      @open_pr_numbers&.delete([repo, branch])
     end
 
-    def remote_sha(branch)
-      out = `git ls-remote origin refs/heads/#{branch.shellescape} 2>/dev/null`.strip
+    def remote_sha(branch, dir: nil)
+      out = Git.run(dir, "ls-remote", "origin", "refs/heads/#{branch}", stderr: :discard).out.strip
       out.empty? ? nil : out.split(/\s+/).first
     end
 
-    def push_sha(sha, branch, force: true)
+    def push_sha(sha, branch, force: true, dir: nil)
       return true if $dont_push
-      args = ["git", "push", "--atomic", "--no-verify"]
-      args << "--force" if force
-      system(*args, "origin", "#{sha}:refs/heads/#{branch}")
+      Git.stream(dir, "push", "--atomic", "--no-verify", *("--force" if force), "origin", "#{sha}:refs/heads/#{branch}")
     end
 
     PR_STATE_FIELDS = <<~GQL.gsub(/\s+/, " ").strip
@@ -111,7 +110,7 @@ module GitHub
       owner, name = repo.split("/")
       aliases = numbers.map { |n| "pr#{n}: pullRequest(number: #{n.to_i}) { #{PR_STATE_FIELDS} }" }
       query = "{ repository(owner: #{owner.to_json}, name: #{name.to_json}) { #{aliases.join(" ")} } }"
-      out = IO.popen(["gh", "api", "graphql", "-f", "query=#{query}"], err: [:child, :out], &:read).to_s
+      out = gh("api", "graphql", "-f", "query=#{query}", stderr: :merge).out
       # A number that no longer resolves makes gh exit 1 with the other nodes still in `data`, so
       # the exit code alone would throw away nineteen good answers for one bad one.
       parsed = begin
@@ -126,13 +125,14 @@ module GitHub
 
     def get_auth_token
       warning "Using your GitHub auth token to perform actions on your behalf."
-      `gh auth token`
+      gh("auth", "token").out
     end
 
     @client = nil
 
     def get_client
       if @client == nil
+        require 'octokit'
         @client = Octokit::Client.new(:access_token => get_auth_token)
       end
       return @client
@@ -167,5 +167,19 @@ module GitHub
       client = get_client
       files = client.commit(repo, sha).files
       files.sum(&:changes)
+    end
+
+    private
+
+    def pr_for(branch, repo)
+      repo ||= Git.repo_name_with_org
+      num = get_pr_number(branch, only_mine: false, repo: repo)
+      error "No PR found for #{branch}" if num.nil? || num.empty?
+      [num, repo]
+    end
+
+    def patch_pr(repo, num, field, value)
+      result = gh("api", "repos/#{repo}/pulls/#{num}", "-X", "PATCH", "-f", "#{field}=#{value}", stderr: :merge)
+      error "Failed to change PR #{field}: #{result.out.strip[0, 200]}" unless result.ok?
     end
   end
