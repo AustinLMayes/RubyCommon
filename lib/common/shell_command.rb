@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-require 'open3'
 require 'shellwords'
+require_relative 'git'
 
 class ShellCommand
   # A heredoc body is data only if its consumer can't execute it — `bash <<'SH'` hides a real commit.
@@ -28,14 +28,7 @@ class ShellCommand
   attr_reader :raw, :heredocs
 
   def self.git_aliases(dir, overrides = [])
-    @git_aliases ||= {}
-    @git_aliases[[dir, overrides]] ||= begin
-      location = dir ? ['-C', dir] : []
-      out, status = Open3.capture2('git', *location, *overrides.flat_map { |o| ['-c', o] },
-                                   'config', '-z', '--get-regexp', '^alias\.', err: File::NULL)
-      entries = status.success? ? out.split("\0") : []
-      entries.to_h { |e| e.delete_prefix('alias.').split("\n", 2).then { |k, v| [k, v.to_s] } }
-    end
+    Git.aliases(dir: dir, overrides: overrides)
   end
 
   # <rest> must already be unquoted - a `!` alias re-quotes it into the shell code git runs

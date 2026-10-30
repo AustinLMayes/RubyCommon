@@ -1,8 +1,83 @@
+require_relative "command"
+require_relative "delays"
 require_relative "logging"
 
 module Git
     extend self
-  
+
+    class Error < StandardError; end
+
+    def run(dir, *args, config: [], **opts)
+      Command.run("git", *location(dir), *config.flat_map { |c| ["-c", c] }, *args, **opts)
+    end
+
+    def run!(dir, *args, error: Error, message: :full, **opts)
+      result = run(dir, *args, **opts)
+      return result if result.ok?
+
+      raise error, failure(args, result, message)
+    end
+
+    def out(dir, *args, **opts)
+      result = run(dir, *args, **opts)
+      result.out.strip if result.ok?
+    end
+
+    def ok?(dir, *args, **opts)
+      run(dir, *args, **opts).ok?
+    end
+
+    def stream(dir, *args, config: [], env: {})
+      system(env, "git", *location(dir), *config.flat_map { |c| ["-c", c] }, *args)
+    end
+
+    def toplevel(dir: nil, **opts)
+      out(dir, "rev-parse", "--show-toplevel", **opts)
+    end
+
+    def git_dir(dir: nil, **opts)
+      out(dir, "rev-parse", "--path-format=absolute", "--git-dir", **opts)
+    end
+
+    def common_dir(dir: nil, **opts)
+      out(dir, "rev-parse", "--path-format=absolute", "--git-common-dir", **opts)
+    end
+
+    def repo?(dir)
+      ok?(dir, "rev-parse", "--git-dir")
+    end
+
+    def remote_url(remote = "origin", dir: nil, push: false, **opts)
+      out(dir, "remote", "get-url", *("--push" if push), remote, **opts)
+    end
+
+    def default_branch(remote = "origin", dir: nil, **opts)
+      return "production" if ok?(dir, "rev-parse", "--verify", "-q", "refs/remotes/#{remote}/production", **opts)
+
+      out(dir, "symbolic-ref", "-q", "--short", "refs/remotes/#{remote}/HEAD", **opts)&.delete_prefix("#{remote}/")
+    end
+
+    def slug(url)
+      url.to_s.strip[%r{[:/]([^/:]+/[^/]+?)(?:\.git)?/?\z}, 1]
+    end
+
+    def config(key, dir: nil, **opts)
+      out(dir, "config", "--get", key, **opts)
+    end
+
+    def config_all(key, dir: nil, **opts)
+      out(dir, "config", "--get-all", key, **opts).to_s.split("\n")
+    end
+
+    def aliases(dir: nil, overrides: [])
+      @aliases ||= {}
+      @aliases[[dir, overrides]] ||= begin
+        result = run(dir, "config", "-z", "--get-regexp", '^alias\.', config: overrides, stderr: :discard)
+        entries = result.ok? ? result.out.split("\0") : []
+        entries.to_h { |e| e.delete_prefix("alias.").split("\n", 2).then { |k, v| [k, v.to_s] } }
+      end
+    end
+
     def branch_for_comparison
       branch = "origin/" + current_branch
       unless branch_is_on_remote? current_branch
@@ -22,30 +97,30 @@ module Git
     end
 
     def branch_is_on_remote?(branch)
-      `git branch -r`.split("\n").include? "  origin/#{branch}"
+      capture("branch", "-r").split("\n").include? "  origin/#{branch}"
     end
   
     def checkout_branch(branch)
-      system "git", "checkout", branch
+      stream nil, "checkout", branch
       Git.ensure_branch branch
-      system "git branch --set-upstream-to=origin/#{branch} #{branch}"
-      system "git pull"
+      stream nil, "branch", "--set-upstream-to=origin/#{branch}", branch
+      stream nil, "pull"
     end
   
-    def current_branch
-      `git branch --show-current`.strip
+    def current_branch(dir: nil)
+      out(dir, "symbolic-ref", "-q", "HEAD").to_s.delete_prefix("refs/heads/")
     end
 
     def repo_name
-      `git config --get remote.origin.url`.strip.split("/").last.gsub(".git", "")
+      capture("config", "--get", "remote.origin.url").strip.split("/").last.gsub(".git", "")
     end
 
     def repo_org
-      `git config --get remote.origin.url`.strip.split(":").last.split("/").first
+      capture("config", "--get", "remote.origin.url").strip.split(":").last.split("/").first
     end
 
     def repo_name_with_org
-      `git config --get remote.origin.url`.strip.split(":").last.split("/")[0..1].join("/").gsub(".git", "")
+      capture("config", "--get", "remote.origin.url").strip.split(":").last.split("/")[0..1].join("/").gsub(".git", "")
     end
   
     def ensure_branch(branch)
@@ -59,8 +134,8 @@ module Git
     def delete_branches(*branches, remote: true)
       info "Deleting #{branches.join(" ")}..."
       branches.shuffle.each do |branch|
-        system "git branch -D #{branch}"
-        system "git push origin --delete #{branch}" if remote && !$dont_push
+        stream nil, "branch", "-D", branch
+        stream nil, "push", "origin", "--delete", branch if remote && !$dont_push
         wait_range 3, 6
       end
     end
@@ -68,7 +143,7 @@ module Git
     def pull_branches(*branches, ensure_exists: true, delay: [0, 0])
       act_on_branches *branches, ensure_exists: ensure_exists, delay: delay do |branch|
         info "Pulling #{branch}"
-        system "git", "pull"
+        stream nil, "pull"
       end
     end
   
@@ -80,24 +155,9 @@ module Git
     end
   
     def act_on_branches(*branches, ensure_exists: true, delay: [0, 0], shuffle: true, &block)
-      existing = []
       branches.each do |branch|
-        existing << branch
-  
-        # if system "git rev-parse --verify #{branch}"
-        #   existing << branch
-        # elsif ensure_exists
-        #   error "Branch #{branch} does not exist in repository!"
-        # else
-        #   warning "Tried to check out #{branch} but it didn't exist!"
-        # end
-      end
-  
-      branches = branches.shuffle if shuffle
-  
-      existing.each do |branch|
         info "Checking out #{branch}..."
-        system "git", "checkout", branch
+        stream nil, "checkout", branch
         if current_branch.downcase == branch.downcase
           wait_range *delay
           block.call branch
@@ -110,7 +170,7 @@ module Git
     end
   
     def branch_exists(branch)
-      system "git rev-parse --verify #{branch}"
+      stream nil, "rev-parse", "--verify", branch
     end
 
     # Only switch if there are no uncommitted changes
@@ -121,7 +181,7 @@ module Git
       branches.each do |branch|
         if branch_exists branch
           info "Switching to #{branch}"
-          system "git checkout #{branch}"
+          stream nil, "checkout", branch
           return
         end
       end
@@ -129,21 +189,18 @@ module Git
     end
   
     def nth_commit_sha(offset)
-      `git log --reverse -n#{offset} --pretty="%H" | head -n1`.strip
+      capture("log", "--reverse", "-n#{offset}", "--pretty=%H").lines.first.to_s.strip
     end
   
     def commits_after(date)
       warning "Branch must be pushed to get accurate dates" unless branch_is_on_remote? current_branch
-      `git log --reverse --since="#{date}" --pretty="%H" #{branch_for_comparison}..#{current_branch}`.split("\n")
+      capture("log", "--reverse", "--since=#{date}", "--pretty=%H", "#{branch_for_comparison}..#{current_branch}").split("\n")
     end
 
     # [{sha: "123", date: Ruby Date, message: "message"}]
     def commits_after_with_date(date)
       warning "Branch must be pushed to get accurate dates" unless branch_is_on_remote? current_branch
-      `git log --reverse --since="#{date}" --pretty="%H||%aD" #{branch_for_comparison}..#{current_branch}`.split("\n").map do |line|
-        sha, date = line.split("||")
-        {sha: sha, date: DateTime.parse(date), message: commit_message(sha)}
-      end
+      dated_commits_since(date)
     end
 
     def commits_after_last_push
@@ -155,47 +212,30 @@ module Git
     end
 
     def my_commits_after_with_date(date, author)
-      commits = `git log --reverse --since="#{date}" --pretty="%H||%aD" #{branch_for_comparison}..#{current_branch}`.split("\n").map do |line|
-        sha, date = line.split("||")
-        {sha: sha, date: DateTime.parse(date), message: commit_message(sha)}
-      end
-      commits.select do |commit|
-        commit[:message].include? author
-      end
-      commits
+      dated_commits_since(date)
     end
 
     def last_n_commits(n)
-      commits = `git log --reverse -n#{n} --pretty="%H" #{current_branch}`.split("\n")
+      commits = capture("log", "--reverse", "-n#{n}", "--pretty=%H", current_branch).split("\n")
       commits.reverse
     end
   
     def last_pushed_date
-      DateTime.parse(`git log --pretty="%aD" #{branch_for_comparison} | head -n1`.strip).localtime
+      DateTime.parse(capture("log", "-1", "--pretty=%aD", branch_for_comparison).strip).localtime
     end
 
     def has_unpushed_commits?
-      `git status`.include? "Your branch is ahead of"
+      capture("status").include? "Your branch is ahead of"
     end
   
     def lines_changed(sha)
-      out = `git show #{sha} --oneline --numstat`.strip
-      count = 0
-      return count if out.blank? || out.include?("fatal: bad object")
-      out.split("\n")[1..-1].each do |l|
-        l.split(' ').each do |part|
-          begin
-            count += part.strip.to_i
-          rescue => exception
-            break
-          end
-        end
-      end
-      count
+      out = capture("show", sha, "--oneline", "--numstat").strip
+      return 0 if out.empty? || out.include?("fatal: bad object")
+      out.split("\n")[1..-1].sum { |l| l.split(" ").sum { |part| part.strip.to_i } }
     end
 
     def uncommitted_lines
-      `git diff --numstat`.split("\n").map do |line|
+      capture("diff", "--numstat").split("\n").map do |line|
         line.split(' ').first.to_i
       end.sum
     end
@@ -205,12 +245,12 @@ module Git
     end
 
     def last_commit_message
-      extract_commit_message(`git log -1 --pretty=%B`)
+      extract_commit_message(capture("log", "-1", "--pretty=%B"))
     end
 
     def commit(msg)
-      `git add .`
-      `git c -am \"#{msg}\"`
+      capture "add", "."
+      capture "c", "-am", msg
     end
 
     def random_commit(*message_variants)
@@ -230,33 +270,24 @@ module Git
       return false if $dont_push
       branch = current_branch
       refspec = "#{branch}:#{branch}"
+      force_flag = force ? ["--force"] : []
       if make_branch_if_missing && !branch_is_on_remote?(branch)
         info "Branch #{branch} not found on remote, creating it..."
-        if force
-          `git push --porcelain --set-upstream --force origin #{refspec}`
-        else
-          `git push --porcelain --set-upstream origin #{refspec}`
-        end
+        capture "push", "--porcelain", "--set-upstream", *force_flag, "origin", refspec
         return true
       end
-      res = if force
-              `git push --porcelain --force origin #{refspec}`
-            else
-              `git push --porcelain origin #{refspec}`
-            end
-      res.include? ".."
+      capture("push", "--porcelain", *force_flag, "origin", refspec).include? ".."
     end
 
     def find_branches(pattern)
       puts "Looking for branches matching #{pattern}..."
       # `+` marks a branch checked out in another worktree — drop it too, or the
       # name comes back as "+ austin/s/foo" and callers use that as a branch.
-      `git branch -a`.split("\n").map { |line| line.sub(/\A\s*[*+]?\s*/, "").strip }.select do |line|
+      capture("branch", "-a").split("\n").map { |line| line.sub(/\A\s*[*+]?\s*/, "").strip }.select do |line|
         debug "Checking if #{line} matches #{pattern} (#{line.match?(/#{pattern}/)})" unless line.include?("remotes")
         !line.include?("remotes") && line.match?(/#{pattern}/)
       end
     end
-
     def find_branches_multi(*names)
       branches = names.map do |name|
         if name.is_a? String
@@ -283,7 +314,7 @@ module Git
         FileUtils.rm_rf patches_path
       end
       FileUtils.mkdir_p patches_path
-      system "git", "format-patch", "--diff-algorithm=myers", "--zero-commit", "--full-index", "--no-signature", "--no-stat", "-N", "-o", patches_path, "#{base}..#{branch}"
+      stream nil, "format-patch", "--diff-algorithm=myers", "--zero-commit", "--full-index", "--no-signature", "--no-stat", "-N", "-o", patches_path, "#{base}..#{branch}"
       if prefix
         Dir.glob(patches_path + "/*.patch").each do |file|
           FileUtils.mv file, patches_path + "/../" + prefix + "-" + File.basename(file)
@@ -297,29 +328,47 @@ module Git
       error "No patches found in #{patches_path}" unless Dir.exist?(patches_path)
       error "No patches found in #{patches_path}" if Dir.empty?(patches_path)
       error "No patches found with prefix #{prefix}" if Dir.glob(patches_path + "/#{prefix}*.patch").empty?
-      system "git am --3way --ignore-whitespace #{Dir.glob(patches_path + "/#{prefix}*.patch").join(" ")} #{interactive ? "-i" : ""}"
-      error "Failed to apply patches" unless $?.success?
+      applied = stream nil, "am", "--3way", "--ignore-whitespace", *Dir.glob(patches_path + "/#{prefix}*.patch"), *("-i" if interactive)
+      error "Failed to apply patches" unless applied
     end
 
     def commits_between(branch1, branch2)
-      `git log --no-merges --reverse --pretty="%H" #{branch1}..#{branch2}`.split("\n")
+      capture("log", "--no-merges", "--reverse", "--pretty=%H", "#{branch1}..#{branch2}").split("\n")
     end
 
     def my_commits_between(branch1, branch2, author)
-      commits = commits_between branch1, branch2
-      commits.select do |commit|
-        message = `git log --format=%B -n 1 #{commit}`.strip.split("\n").first
-        message.include? author
-      end
-      commits
+      commits_between branch1, branch2
     end
 
     def commit_message(sha)
-      full = `git log -1 --pretty=%B #{sha}`.strip
+      full = capture("log", "-1", "--pretty=%B", sha).strip
       extract_commit_message full
     end
 
     private
+
+    def location(dir)
+      dir ? ["-C", dir] : []
+    end
+
+    def capture(*args)
+      run(nil, *args, stderr: :inherit).out
+    end
+
+    def failure(args, result, message)
+      return "git #{args.join(" ")} timed out" if result.timed_out?
+
+      text = (result.err.strip.empty? ? result.out : result.err).strip
+      text = text.lines.last.to_s.strip if message == :last_line
+      text.empty? ? "git #{args.join(" ")} exited #{result.status&.exitstatus}" : text
+    end
+
+    def dated_commits_since(date)
+      capture("log", "--reverse", "--since=#{date}", "--pretty=%H||%aD", "#{branch_for_comparison}..#{current_branch}").split("\n").map do |line|
+        sha, date = line.split("||")
+        {sha: sha, date: DateTime.parse(date), message: commit_message(sha)}
+      end
+    end
 
     def extract_commit_message(full)
       full = full.split("\n") unless full.is_a? Array
