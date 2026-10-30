@@ -56,6 +56,12 @@ class GitHubTest < Minitest::Test
     assert_equal '', result.out
   end
 
+  def test_gh_missing_raises_when_not_failing_open
+    Command.runner = ->(_argv, **) { raise Command::Unavailable, 'No such file or directory - gh' }
+    error = assert_raises(Command::Unavailable) { GitHub.gh('api', 'user', fail_open: false) }
+    assert_equal 'No such file or directory - gh', error.message
+  end
+
   def test_make_pr_passes_fields_as_argv_without_shell_quoting
     answer('{"number": 42}')
     num = quietly { GitHub.make_pr("it's done", body: 'a "b" $c', base: 'main', head: 'austin/x', draft: true, repo: 'o/r') }

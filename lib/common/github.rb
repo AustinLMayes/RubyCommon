@@ -15,10 +15,12 @@ module GitHub
       @github_username ||= gh("api", "user", "--jq", ".login").out.strip
     end
 
-    def gh(*args, json: false, stderr: :inherit, **opts)
+    def gh(*args, json: false, stderr: :inherit, fail_open: true, **opts)
       result = begin
         Command.run("gh", *args, stderr: stderr, **opts)
       rescue Command::Unavailable => e
+        raise unless fail_open
+
         Command::Result.new(+"", e.message, nil, false)
       end
       json ? JSON.parse(result.out) : result
