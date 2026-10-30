@@ -26,6 +26,10 @@ module GitHub
       json ? JSON.parse(result.out) : result
     end
 
+    def stream(*args)
+      system("gh", *args)
+    end
+
     def make_pr(title, body: " ", base: nil, suffix: "", head: nil, draft: false, repo: nil)
       base = "production" unless base
       head ||= Git.current_branch

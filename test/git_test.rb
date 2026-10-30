@@ -111,6 +111,18 @@ class GitTest < Minitest::Test
     capture_subprocess_io { refute Git.stream(@repo, 'checkout', 'nope') }
   end
 
+def test_capture_keeps_stdout_when_git_fails_like_a_backtick
+  out, err = capture_subprocess_io { assert_equal "nope^\n", Dir.chdir(@repo) { Git.capture('rev-parse', 'nope^') } }
+
+  assert_empty out
+  assert_match 'nope^', err
+end
+
+def test_branch_lists
+  assert_equal %w[production main master dev], Git.root_branches
+  assert_equal %w[main dev production master staging], Git.base_branches
+end
+
   def test_toplevel_git_dir_and_common_dir_in_a_linked_worktree
     tree = File.join(@tmp, 'tree')
     sh(@repo, 'git', 'worktree', 'add', '-q', '-b', 'side', tree)

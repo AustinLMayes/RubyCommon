@@ -33,6 +33,10 @@ module Git
       system(env, "git", *location(dir), *config.flat_map { |c| ["-c", c] }, *args)
     end
 
+    def capture(*args)
+      run(nil, *args, stderr: :inherit).out
+    end
+
     def toplevel(dir: nil, **opts)
       out(dir, "rev-parse", "--show-toplevel", **opts)
     end
@@ -79,6 +83,10 @@ module Git
         entries.to_h { |e| e.delete_prefix("alias.").split("\n", 2).then { |k, v| [k, v.to_s] } }
       end
     end
+
+    def root_branches = %w[production main master dev]
+
+    def base_branches = %w[main dev production master staging]
 
     def branch_for_comparison
       branch = "origin/" + current_branch
@@ -351,10 +359,6 @@ module Git
 
     def location(dir)
       dir ? ["-C", dir] : []
-    end
-
-    def capture(*args)
-      run(nil, *args, stderr: :inherit).out
     end
 
     def failure(args, result, message)

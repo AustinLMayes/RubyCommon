@@ -62,6 +62,21 @@ class GitHubTest < Minitest::Test
     assert_equal 'No such file or directory - gh', error.message
   end
 
+def test_stream_runs_gh_on_the_terminal_and_returns_its_exit
+  Dir.mktmpdir do |dir|
+    File.write(File.join(dir, 'gh'), "#!/bin/sh\necho \"$@\"\nexit 3\n")
+    File.chmod(0o755, File.join(dir, 'gh'))
+    path = ENV['PATH']
+    ENV['PATH'] = dir
+    out, = capture_subprocess_io { refute GitHub.stream('run', 'cancel', '7') }
+    assert_equal "run cancel 7\n", out
+    ENV['PATH'] = File::NULL
+    assert_nil GitHub.stream('api', 'user')
+  ensure
+    ENV['PATH'] = path
+  end
+end
+
   def test_make_pr_passes_fields_as_argv_without_shell_quoting
     answer('{"number": 42}')
     num = quietly { GitHub.make_pr("it's done", body: 'a "b" $c', base: 'main', head: 'austin/x', draft: true, repo: 'o/r') }
