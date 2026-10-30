@@ -107,6 +107,13 @@ class HookIOContractTest < Minitest::Test
                  JSON.parse(out))
   end
 
+  def test_warn_with_a_leading_newline_keeps_the_header_bare
+    _, out, = hook('HookIO.warn!("g", "\n  • a", event: "PreToolUse")')
+    assert_equal({ 'systemMessage' => "g:\n  • a",
+                   'hookSpecificOutput' => { 'hookEventName' => 'PreToolUse', 'additionalContext' => "g:\n  • a" } },
+                 JSON.parse(out))
+  end
+
   def test_fail_open_says_what_went_unchecked
     rc, out, = hook('HookIO.fail_open!("g", "boom", "this push")')
     assert_equal 0, rc

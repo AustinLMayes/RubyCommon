@@ -47,8 +47,7 @@ module HookIO
   # the whole point of blocking — never block silently.
   def self.block!(guard_or_message, message = nil)
     if message
-      sep = message.start_with?("\n") ? '' : ' '
-      warn "BLOCKED by #{guard_or_message} hook:#{sep}#{message}"
+      warn "BLOCKED by #{guard_or_message} hook:#{sep(message)}#{message}"
     else
       warn guard_or_message
     end
@@ -56,7 +55,7 @@ module HookIO
   end
 
   def self.warn!(guard, note, event: nil)
-    text = "#{guard}: #{note}"
+    text = "#{guard}:#{sep(note)}#{note}"
     out = { systemMessage: text }
     out[:hookSpecificOutput] = { hookEventName: event, additionalContext: text } if event
     puts JSON.generate(out)
@@ -83,6 +82,11 @@ module HookIO
   def self.unattended?
     !ENV['CLAUDE_JOB_DIR'].to_s.empty?
   end
+
+  def self.sep(text)
+    text.start_with?("\n") ? '' : ' '
+  end
+  private_class_method :sep
 
   def self.decide!(decision, guard, reason)
     puts JSON.generate(hookSpecificOutput: {
