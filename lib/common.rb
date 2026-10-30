@@ -9,17 +9,3 @@ def fix_path(path)
   end
   path
 end
-
-def root_branches
-  branches = []
-  branches << "production"
-  branches << "main"
-  branches << "master"
-  branches << "dev"
-  branches
-end
-
-def base_branches
-  branches = ["main", "dev", "production", "master", "staging"]
-  branches
-end

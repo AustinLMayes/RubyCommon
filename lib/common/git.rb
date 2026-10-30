@@ -110,19 +110,8 @@ module Git
       capture("branch", "-r").split("\n").include? "  origin/#{branch}"
     end
   
-    def checkout_branch(branch)
-      stream nil, "checkout", branch
-      Git.ensure_branch branch
-      stream nil, "branch", "--set-upstream-to=origin/#{branch}", branch
-      stream nil, "pull"
-    end
-  
     def current_branch(dir: nil)
       out(dir, "symbolic-ref", "-q", "HEAD").to_s.delete_prefix("refs/heads/")
-    end
-
-    def repo_name
-      capture("config", "--get", "remote.origin.url").strip.split("/").last.gsub(".git", "")
     end
 
     def repo_org
@@ -139,15 +128,6 @@ module Git
 
     def ensure_clean
       error "Uncommitted changes detected!" if has_uncommitted_changes?
-    end
-  
-    def delete_branches(*branches, remote: true)
-      info "Deleting #{branches.join(" ")}..."
-      branches.shuffle.each do |branch|
-        stream nil, "branch", "-D", branch
-        stream nil, "push", "origin", "--delete", branch if remote && !$dont_push
-        wait_range 3, 6
-      end
     end
   
     def pull_branches(*branches, ensure_exists: true, delay: [0, 0])
@@ -196,10 +176,6 @@ module Git
         end
       end
       warning "No branches found for #{Dir.pwd}! Tried #{branches.join(", ")}"
-    end
-  
-    def nth_commit_sha(offset)
-      capture("log", "--reverse", "-n#{offset}", "--pretty=%H").lines.first.to_s.strip
     end
   
     def commits_after(date)
@@ -256,23 +232,6 @@ module Git
 
     def last_commit_message
       extract_commit_message(capture("log", "-1", "--pretty=%B"))
-    end
-
-    def commit(msg)
-      capture "add", "."
-      capture "c", "-am", msg
-    end
-
-    def random_commit(*message_variants)
-      message = message_variants.sample
-      message = message.downcase if rand(5) == 0
-      message = message.split(" ").map(&:capitalize).join(" ") if rand(8) == 0
-      built = ""
-      message.split(" ").each do |word|
-        built += word
-        built += " " unless rand(12) == 0
-      end
-      commit built
     end
 
     # True if push was successful and new commits were pushed

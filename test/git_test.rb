@@ -236,14 +236,6 @@ end
     assert_equal 0, in_repo { Git.lines_changed('0' * 40) }
   end
 
-  def test_commit_passes_the_message_through_untouched
-    File.write(File.join(@repo, 'a.txt'), "changed\n")
-    in_repo { Git.commit('Use $HOME and `id` "quoted"') }
-
-    assert_equal 'Use $HOME and `id` "quoted"', Git.out(@repo, 'log', '-1', '--pretty=%s')
-    assert_includes Git.out(@repo, 'log', '-1', '--pretty=%b'), 'Signed-off-by: Test'
-  end
-
   def test_commit_message_and_last_commit_message
     sh(@repo, 'git', 'commit', '-q', '--allow-empty', '-m', 'Title', '-m', 'Body line')
     sha = Git.out(@repo, 'rev-parse', 'HEAD')
@@ -252,11 +244,10 @@ end
     assert_equal 'Title', in_repo { Git.last_commit_message }[:title]
   end
 
-  def test_nth_commit_sha_and_last_n_commits
+  def test_last_n_commits
     commit_file('b.txt', "b\n", 'Second')
     first, second = Git.out(@repo, 'log', '--reverse', '--pretty=%H').split("\n")
 
-    assert_equal first, in_repo { Git.nth_commit_sha(2) }
     assert_equal [second, first], in_repo { Git.last_n_commits(2) }
   end
 
@@ -299,6 +290,6 @@ end
   def test_repo_name_helpers_keep_their_ssh_output
     sh(@repo, 'git', 'remote', 'add', 'origin', 'git@github.com:Owner/Repo.git')
 
-    assert_equal %w[Repo Owner Owner/Repo], in_repo { [Git.repo_name, Git.repo_org, Git.repo_name_with_org] }
+    assert_equal %w[Owner Owner/Repo], in_repo { [Git.repo_org, Git.repo_name_with_org] }
   end
 end
