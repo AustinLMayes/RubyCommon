@@ -80,7 +80,7 @@ module HookIO
   end
 
   def self.unattended?
-    !ENV['CLAUDE_JOB_DIR'].to_s.empty?
+    !ENV['CLAUDE_JOB_DIR'].to_s.empty? && ENV['AX_ATTENDED'] != '1'
   end
 
   def self.sep(text)

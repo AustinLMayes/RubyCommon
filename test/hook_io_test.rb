@@ -173,4 +173,9 @@ class HookIOContractTest < Minitest::Test
     assert_equal [0, 'false', ''], hook('print HookIO.unattended?', env: { 'CLAUDE_JOB_DIR' => '' })
     assert_equal [0, 'false', ''], hook('print HookIO.unattended?', env: { 'CLAUDE_JOB_DIR' => nil })
   end
+
+  def test_an_attended_job_is_not_unattended
+    assert_equal [0, 'false', ''],
+                 hook('print HookIO.unattended?', env: { 'CLAUDE_JOB_DIR' => '/j', 'AX_ATTENDED' => '1' })
+  end
 end
