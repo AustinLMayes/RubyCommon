@@ -439,7 +439,97 @@ class ShellCommandTest < Minitest::Test
 
   def test_git_invocation_gives_up_on_substitutions_past_the_hops
     found = invocations('echo $(echo $(echo $(git push)))', Dir.home, substitutions: true, hops: 2)
-    assert_equal ['it nests substitutions too deep to read'], found.map { |f| f[:unresolved] }
+    assert_equal ['it nests shells or substitutions too deep to read'], found.map { |f| f[:unresolved] }
+  end
+
+  def test_strip_prefix_skips_the_value_a_wrapper_flag_takes
+    assert_equal %w[git push], ShellCommand.strip_prefix(%w[env -u FOO git push])
+    assert_equal %w[git push], ShellCommand.strip_prefix(%w[exec -a x git push])
+    assert_equal %w[git push], ShellCommand.strip_prefix(%w[timeout -s KILL 60 git push])
+    assert_equal %w[fgutils {}], ShellCommand.strip_prefix(%w[xargs -I {} fgutils {}])
+    assert_equal %w[git push], ShellCommand.strip_prefix(%w[caffeinate -i builtin git push])
+  end
+
+  def test_a_line_continuation_joins_the_words
+    assert_equal [%w[git push origin main]], ShellCommand.new("git \\\npush origin main").commands
+    assert_equal ['"ab"'], ShellCommand.new("\"a\\\nb\"").tokens
+  end
+
+  def test_an_ansi_c_string_is_one_word
+    assert_equal [["echo", "$'\\''"], %w[git push origin main]], ShellCommand.new("echo $'\\'' ; git push origin main").commands
+    assert_empty ShellCommand.new(%(gh pr comment 1 --body $'\\' # GH-OK')).comments
+    assert_equal ['git push'], ShellCommand.substitutions("echo $'\\'' $(git push)")
+  end
+
+  def test_a_heredoc_opener_in_a_comment_or_a_string_is_not_one
+    ["# <<true", %(echo "<<true"), "echo '<<true'"].each do |line|
+      cmd = ShellCommand.new(":\n#{line}\ngit push origin main\ntrue")
+      assert_empty cmd.heredocs, line
+      assert_includes cmd.commands, %w[git push origin main]
+    end
+    assert_equal ['E'], ShellCommand.new("cat <<'E'\nx\nE").heredocs.map(&:delim)
+  end
+
+  def test_substitutions_in_a_heredoc_body_ignore_quotes_and_hashes
+    assert_equal ['git push'], ShellCommand.substitutions("don't\n$(git push)\n", heredoc: true)
+    assert_equal ['git push'], ShellCommand.substitutions("# $(git push)\n", heredoc: true)
+    assert_empty ShellCommand.substitutions('echo \$(git push)')
+    assert_equal ['git push'], ShellCommand.substitutions('echo a\ #$(git push)')
+  end
+
+  def test_git_invocation_normalises_an_escaped_or_equals_command_word
+    with_repo do |dir|
+      ['\git push', 'gi\t push', '=git push', "'git' push"].each do |cmd|
+        assert_equal %w[push], invocations(cmd, dir).map { |f| f[:sub] }, cmd
+      end
+    end
+  end
+
+  def test_git_invocation_reads_csh_and_env_dash_s
+    with_repo do |dir|
+      assert_equal %w[push], invocations(%(tcsh -c "git push origin main"), dir).map { |f| f[:sub] }
+      assert_equal %w[push], invocations(%(env -S "git push origin main"), dir).map { |f| f[:sub] }
+    end
+  end
+
+  def test_git_invocation_gives_up_on_eval_and_shells_past_the_hops
+    found = invocations("eval eval eval eval eval eval git push", Dir.home)
+    assert_equal ['it nests shells or substitutions too deep to read'], found.map { |f| f[:unresolved] }
+    found = invocations(%(bash -c "bash -c 'git push'"), Dir.home, hops: 1)
+    assert_equal ['it nests shells or substitutions too deep to read'], found.map { |f| f[:unresolved] }
+  end
+
+  def test_git_invocation_forgets_a_cd_it_cannot_be_sure_ran_here
+    with_repo do |dir|
+      Dir.mktmpdir('elsewhere') do |other|
+        here = File.realpath(other)
+        real = File.realpath(dir)
+        { "(cd #{dir}) && git status" => other, "(cd #{dir} && git status)" => real,
+          "cd #{dir} & git status" => nil, "cd #{dir} | true; git status" => nil, "true || cd #{dir}; git status" => nil,
+          "test -d x && cd #{dir}; git status" => nil, "cd #{dir} && cd . && git status" => real,
+          "pushd #{dir}; popd; git status" => other, "pushd #{dir} && git status" => real,
+          "popd; git status" => nil }.each do |cmd, want|
+          assert_equal [want], invocations(cmd, other).map { |f| f[:dir] }, cmd
+        end
+        assert_equal here, File.realpath(other)
+      end
+    end
+  end
+
+  def test_git_invocation_follows_substitutions_through_a_shell_alias
+    with_repo do |dir|
+      system('git', '-C', dir, 'config', 'alias.sub', '!x=$(git push origin main)', exception: true)
+      assert_includes invocations('git sub', dir, substitutions: true).map { |f| f[:sub] }, 'push'
+    end
+  end
+
+  def test_git_invocation_drops_a_trailing_comment_and_hands_a_wrapped_shell_to_the_block
+    with_repo do |dir|
+      assert_equal [%w[status]], invocations('git status # push it', dir).map { |f| f[:args].empty? ? [f[:sub]] : [f[:sub], *f[:args]] }
+      seen = []
+      ShellCommand.new(%(find . -exec bash -c 'echo hi' +)).git_invocations(dir: dir) { |words, _| seen << words }
+      assert_equal [['find', '.', '-exec', 'bash', '-c', 'echo hi', '+'], %w[echo hi]], seen
+    end
   end
 
   def test_git_invocation_without_a_subcommand_or_without_git
