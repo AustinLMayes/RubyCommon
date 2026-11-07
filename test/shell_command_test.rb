@@ -371,6 +371,77 @@ class ShellCommandTest < Minitest::Test
     end
   end
 
+  def test_an_apostrophe_in_a_comment_does_not_swallow_the_next_line
+    cmd = ShellCommand.new("a=1 # don't\ngit push origin main")
+    assert_equal [['a=1', '#', "don't"], %w[git push origin main]], cmd.commands
+    assert_equal ["don't"], cmd.comments
+    assert_equal [%w[echo a#b]], ShellCommand.new('echo a#b').commands
+    assert_empty ShellCommand.new(%(gh pr comment --body '# GH-OK')).comments
+  end
+
+  def test_a_backtick_or_process_substitution_is_one_word
+    assert_equal ['x=`git push origin main`'], ShellCommand.new('x=`git push origin main`').tokens
+    assert_equal ['cat', '<(git push origin main)', '>(tee a b)'], ShellCommand.new('cat <(git push origin main) >(tee a b)').tokens
+  end
+
+  def test_a_heredoc_knows_whether_its_delimiter_was_quoted
+    docs = ShellCommand.new("cat <<A <<'B' <<\"C\"\na\nA\nb\nB\nc\nC").heredocs
+    assert_equal [false, true, true], docs.map(&:quoted)
+  end
+
+  def test_substitutions_outermost_first_outside_single_quotes_and_comments
+    text = %(echo $(a) "$(b)" '$(c)' `d` <(e) >(f) $(x $(y)) # $(g))
+    assert_equal ['a', 'b', 'd', 'e', 'f', 'x $(y)'], ShellCommand.substitutions(text)
+    assert_equal ['a ")" b'], ShellCommand.substitutions('$(a ")" b)')
+    assert_equal ['unclosed'], ShellCommand.substitutions('$(unclosed')
+  end
+
+  def test_git_invocation_reads_through_eval_and_exec
+    with_repo do |dir|
+      assert_equal %w[push], invocations("eval 'git push origin production'", dir).map { |f| f[:sub] }
+      assert_equal %w[push], invocations(%(eval "git -C #{dir} push"), Dir.home).map { |f| f[:sub] }
+      assert_equal %w[push], invocations('exec git push origin production', dir).map { |f| f[:sub] }
+      assert_equal %w[push], invocations('{ eval git push; }', dir).map { |f| f[:sub] }
+    end
+  end
+
+  def test_git_invocation_finds_a_shell_handed_code_mid_command
+    with_repo do |dir|
+      assert_equal %w[push], invocations(%(find . -exec bash -c 'git push origin x' \;), dir).map { |f| f[:sub] }
+      assert_equal %w[push], invocations(%(xargs -n1 zsh -ec 'git push origin x'), dir).map { |f| f[:sub] }
+    end
+  end
+
+  def test_git_invocation_follows_substitutions_only_when_asked_and_keeps_the_cd
+    with_repo do |dir|
+      Dir.mktmpdir('elsewhere') do |other|
+        cmd = "cd #{dir} && x=$(git push origin main)"
+        assert_empty invocations(cmd, other)
+        found = invocations(cmd, other, substitutions: true)
+        assert_equal [['push', File.realpath(dir)]], found.map { |f| [f[:sub], f[:dir]] }
+        found = invocations("x=$(git push) && cd #{dir}", other, substitutions: true)
+        assert_equal [['push', other]], found.map { |f| [f[:sub], f[:dir]] }
+        assert_equal %w[push], invocations(%(bash -c 'x=$(git push origin production)'), dir, substitutions: true).map { |f| f[:sub] }
+        assert_equal %w[push], invocations('echo "`git push`" <(git push)', dir, substitutions: true).map { |f| f[:sub] }.uniq
+        assert_empty invocations("echo '$(git push)' # $(git push)", dir, substitutions: true)
+      end
+    end
+  end
+
+  def test_git_invocation_follows_substitutions_in_an_unquoted_heredoc
+    with_repo do |dir|
+      assert_equal %w[push], invocations("cat <<E\n$(git push origin main)\nE", dir, substitutions: true).map { |f| f[:sub] }
+      assert_empty invocations("cat <<'E'\n$(git push origin main)\nE", dir, substitutions: true)
+      found = invocations("cd /tmp && cat <<E\n$(git push origin main)\nE", dir, substitutions: true)
+      assert_equal [['push', nil]], found.map { |f| [f[:sub], f[:dir]] }
+    end
+  end
+
+  def test_git_invocation_gives_up_on_substitutions_past_the_hops
+    found = invocations('echo $(echo $(echo $(git push)))', Dir.home, substitutions: true, hops: 2)
+    assert_equal ['it nests substitutions too deep to read'], found.map { |f| f[:unresolved] }
+  end
+
   def test_git_invocation_without_a_subcommand_or_without_git
     with_repo do |dir|
       assert_equal [nil], invocations('git --version', dir).map { |f| f[:sub] }
