@@ -31,12 +31,14 @@ class ShellCommand
   DURATION = /\A\d+(\.\d+)?[smhd]?\z/.freeze
   KEYWORDS = %w[if then elif else do while until !].freeze
   SHELLS = %w[bash sh zsh ksh dash csh tcsh fish].freeze
-  QUOTED_SPAN = /(<<-?[ \t]*)?(?:\$'(?:\\.|[^'\\])*'|'[^']*'|"(?:\\.|[^"\\])*")/.freeze
+  ANSI = /\$'((?:\\.|[^'\\])*)'/m.freeze
+  ANSI_ESCAPES = { 'n' => "\n", 't' => "\t", 'r' => "\r", 'e' => "\e", 'a' => "\a", 'b' => "\b", 'f' => "\f", 'v' => "\v" }.freeze
   INLINE_CODE_FLAG = /\A-{1,2}(c|e|E|eval|command)\z/.freeze
   SHELL_CODE_FLAG = /\A-[a-zA-Z]*c[a-zA-Z]*\z/.freeze
 
   GIT_OPTIONS = {
     '-C' => :dir, '-c' => :override, '--exec-path' => :value, '--config-env' => :value, '--super-prefix' => :value,
+    '--attr-source' => :value,
     '--git-dir' => :mover, '--work-tree' => :mover, '--namespace' => :mover
   }.freeze
   REPO_ENV = /\AGIT_(DIR|WORK_TREE|COMMON_DIR|NAMESPACE|CONFIG\w*)=/.freeze
@@ -125,6 +127,87 @@ class ShellCommand
     end
     text.length
   end
+  def self.ansi_decode(text)
+    text.gsub(/\\(x\h{1,2}|u\h{1,4}|[0-7]{1,3}|.)/m) do
+      e = Regexp.last_match(1)
+      if e.match?(/\A[xu]\h/) then (n = e[1..].hex) < 128 ? n.chr : '?'
+      elsif e.match?(/\A[0-7]/) then (n = e.oct) < 128 ? n.chr : '?'
+      else ANSI_ESCAPES.fetch(e, e)
+      end
+    end
+  end
+
+  def self.trailing_closes(tok)
+    count = depth = 0
+    quote = nil
+    i = 0
+    while i < tok.length
+      c = tok[i]
+      if quote.nil? && depth.zero? && c == ')'
+        count += 1
+        i += 1
+        next
+      end
+
+      count = 0
+      if quote == "'" then quote = nil if c == "'"
+      elsif c == '\\' then i += 1
+      elsif tok[i, 2].match?(/\A[$<>]\(/)
+        depth += 1
+        i += 1
+      elsif c == ')' then depth -= 1
+      elsif quote == '"' then quote = nil if c == '"'
+      elsif ["'", '"'].include?(c) then quote = c
+      end
+      i += 1
+    end
+    count
+  end
+
+  def self.heredoc_scan_text(line)
+    out = +''
+    stack = []
+    i = 0
+    while i < line.length
+      c = line[i]
+      top = stack.last
+      if top == :single
+        stack.pop if c == "'"
+        c = ' '
+      elsif c == '\\'
+        c = '  '
+        i += 1
+      elsif top == :double && line[i, 2] != '$('
+        stack.pop if c == '"'
+        c = ' '
+      elsif (heredoc = line[i..][/\A<<-?[ \t]*(?:'[^']*'|"[^"]*")/])
+        c = heredoc
+        i += heredoc.length - 1
+      elsif line[i, 3] == '$((' || line[i, 2] == '$[' || (line[i, 2] == '((' && stack.empty?)
+        close = line[i, 2] == '$[' ? ']' : '))'
+        stop = (line.index(close, i + 2) || line.length) + close.length
+        c = ' ' * (stop - i)
+        i = stop - 1
+      elsif c == '#' && (i.zero? || line[i - 1].match?(/[ \t;&|()]/)) then break
+      elsif c == "'" then stack << :single
+      elsif c == '"' then stack << :double
+      elsif c == '$' && line[i + 1] == "'"
+        stop = ansi_end(line, i + 2)
+        c = ' ' * (stop - i + 1)
+        i = stop
+      elsif line[i, 2].match?(/\A[$<>]\(/)
+        stack << :sub
+        c = line[i, 2]
+        i += 1
+      elsif c == '(' && top == :sub then stack << :sub
+      elsif c == ')' && top == :sub then stack.pop
+      end
+      out << c
+      i += 1
+    end
+    out
+  end
+
   def self.ansi_end(text, from)
     i = from
     i += text[i] == '\\' ? 2 : 1 while i < text.length && text[i] != "'"
@@ -221,9 +304,10 @@ class ShellCommand
 
   def unquote(str)
     s = str.to_s
-    return s[1..-2].to_s if s.length >= 2 && s[0] == "'" && s[-1] == "'"
+    s = s.gsub(ANSI) { "'#{ShellCommand.ansi_decode(Regexp.last_match(1)).gsub("'", %q('\\\\''))}'" } if s.include?("$'")
+    return s[1..-2].to_s if s.length >= 2 && s[0] == "'" && s[-1] == "'" && !s[1..-2].include?("'")
     return s[1..-2].to_s.gsub(/\\(.)/, '\1') if s.length >= 2 && s[0] == '"' && s[-1] == '"'
-    return s unless s.match?(/['"]/)
+    return s unless s.match?(/['"\\]/)
 
     words = Shellwords.split(s)
     words.length == 1 ? words.first : s
@@ -233,6 +317,34 @@ class ShellCommand
 
   def git_invocations(dir:, hops: 5, walk: false, substitutions: false, &other)
     walk_git(dir, hops: hops, walk: walk, depth: 0, subs: substitutions, &other)
+  end
+
+  def moves?
+    commands.any? { |c| %w[cd pushd popd].include?(ShellCommand.command_name(unquote(ShellCommand.strip_prefix(c).first.to_s))) }
+  end
+
+  def wrapper_options(toks)
+    wrapper = nil
+    chdir = nil
+    i = 0
+    while i < toks.length
+      t = unquote(toks[i])
+      if WRAPPERS.include?(ShellCommand.command_name(t)) then wrapper = ShellCommand.command_name(t)
+      elsif t.match?(ENV_ASSIGN) || t.match?(DURATION) then nil
+      elsif !t.start_with?('-') || wrapper.nil? then break
+      elsif wrapper == 'env' && (t == '--split-string' || t.match?(/\A-[a-zA-Z]*S\z/)) then return [toks[i + 1], chdir]
+      elsif wrapper == 'env' && t.start_with?('--split-string=') then return [t.delete_prefix('--split-string='), chdir]
+      elsif wrapper == 'env' && t.match?(/\A-[a-zA-Z]*S./) then return [t.sub(/\A-[a-zA-Z]*?S/, ''), chdir]
+      elsif t.start_with?('--chdir=') then chdir = t.delete_prefix('--chdir=')
+      elsif { 'env' => %w[-C --chdir], 'sudo' => %w[-D --chdir] }.fetch(wrapper, []).include?(t)
+        chdir = unquote(toks[i + 1].to_s)
+        i += 1
+      elsif wrapper == 'env' && t.match?(/\A-C./) then chdir = t[2..]
+      elsif WRAPPER_VALUE_FLAGS.fetch(wrapper, []).include?(t) then i += 1
+      end
+      i += 1
+    end
+    [nil, chdir]
   end
 
   protected
@@ -246,23 +358,25 @@ class ShellCommand
       next [] if raw_tokens.empty?
 
       raw_tokens.first[/\A[({]*/].count('(').times { subshells << dir }
-      closes = raw_tokens.last.start_with?('"', "'") || raw_tokens.last.include?('(') ? 0 : raw_tokens.last[/[)}]*\z/].count(')')
+      closes = ShellCommand.trailing_closes(raw_tokens.last)
       nested = subs ? substituted(raw_tokens.join(' '), raw_tokens, dir, hops: hops, walk: walk, depth: depth, &other) : []
       toks = raw_tokens.dup
       toks[0] = toks[0].sub(/\A[({]+/, '')
-      toks[-1] = toks[-1].sub(/[)}]+\z/, '') unless toks[-1].start_with?('"', "'")
+      toks[-1] = toks[-1][0, toks[-1].length - closes] if closes.positive?
+      toks[-1] = '' if toks[-1].match?(/\A\}+\z/)
       toks = toks.reject(&:empty?).drop_while { |t| KEYWORDS.include?(t) }
       words = ShellCommand.strip_prefix(toks)
-      if words.empty?
+      split, chdir = wrapper_options(toks)
+      if words.empty? && split.nil?
         closes.times { dir = subshells.pop if subshells.any? }
         next nested
       end
 
-      name = ShellCommand.command_name(unquote(words.first))
+      name = ShellCommand.command_name(unquote(words.first.to_s))
       shell_at = words.index { |w| SHELLS.include?(ShellCommand.command_name(unquote(w))) }
       code = shell_at && ShellCommand.inline_code(words[shell_at..], SHELL_CODE_FLAG)
-      env_at = toks.index { |t| ShellCommand.command_name(unquote(t)) == 'env' }
-      code ||= toks[env_at + 2] if env_at && %w[-S --split-string].include?(unquote(toks[env_at + 1].to_s))
+      code ||= split
+      here = chdir ? moved_dir(chdir, dir, walk) : dir
       unsure = %w[| &].include?(after) || %w[| ||].include?(before) || (before == '&&' && after != '&&')
       result = nested + if %w[cd pushd popd].include?(name)
                  pushed << dir if name == 'pushd'
@@ -270,21 +384,24 @@ class ShellCommand
                  dir = unsure ? nil : target
                  []
                elsif (name == 'eval' || code) && depth >= hops
-                 [too_deep(toks, dir)]
+                 [too_deep(toks, here)]
                elsif GIT_WORDS.include?(name)
                  moved = toks[0, toks.length - words.length].any? { |t| t.match?(REPO_ENV) }
                  unresolved = 'a GIT_DIR / GIT_CONFIG style variable moves the repository this guard would read' if moved
-                 site = { segment: toks, cwd: dir, at: toks.length - words.length + 1, nested: depth.positive? }
-                 resolve_git(words[1..], dir, [], unresolved, hops: hops, walk: walk, depth: depth, site: site, typed: true,
-                                                              subs: subs, &other)
+                 unresolved ||= xargs_fed(toks[0, toks.length - words.length], words)
+                 site = { segment: toks, cwd: here, at: toks.length - words.length + 1, nested: depth.positive? }
+                 resolve_git(words[1..], here, [], unresolved, hops: hops, walk: walk, depth: depth, site: site, typed: true,
+                                                               subs: subs, &other)
                elsif name == 'eval'
-                 ShellCommand.new(words[1..].map { |t| unquote(t) }.join(' '))
-                             .walk_git(dir, hops: hops, walk: walk, depth: depth + 1, subs: subs, &other)
+                 inner = ShellCommand.new(words[1..].map { |t| unquote(t) }.join(' '))
+                 found_inner = inner.walk_git(here, hops: hops, walk: walk, depth: depth + 1, subs: subs, &other)
+                 dir = nil if inner.moves?
+                 found_inner
                elsif code
-                 other&.call(words.map { |t| unquote(t) }, dir, toks.map { |t| unquote(t) }) if shell_at&.positive?
-                 ShellCommand.new(unquote(code)).walk_git(dir, hops: hops, walk: walk, depth: depth + 1, subs: subs, &other)
+                 other&.call(words.map { |t| unquote(t) }, here, toks.map { |t| unquote(t) }) if shell_at&.positive?
+                 ShellCommand.new(unquote(code)).walk_git(here, hops: hops, walk: walk, depth: depth + 1, subs: subs, &other)
                else
-                 other&.call(words.map { |t| unquote(t) }, dir, toks.map { |t| unquote(t) })
+                 other&.call(words.map { |t| unquote(t) }, here, toks.map { |t| unquote(t) })
                  []
                end
       closes.times { dir = subshells.pop if subshells.any? }
@@ -294,6 +411,20 @@ class ShellCommand
 
     docs = heredocs.reject { |h| h.quoted || h.executable? }.map(&:body).join("\n")
     found + substituted(docs, [], dir == start ? start : nil, hops: hops, walk: walk, depth: depth, heredoc: true, &other)
+  end
+
+  def moved_dir(target, dir, walk)
+    target.match?(Paths::UNKNOWABLE) || dir.nil? ? nil : Paths.canonical(target, base: dir, walk: walk)
+  end
+
+  def xargs_fed(prefix, words)
+    at = prefix.index { |t| ShellCommand.command_name(unquote(t)) == 'xargs' }
+    return unless at
+
+    flags = prefix[(at + 1)..].map { |t| unquote(t) }
+    i = flags.index { |t| %w[-I -J].include?(t) }
+    marker = i ? flags[i + 1] : flags.find { |t| t.match?(/\A-[IJ]./) }&.[](2..)
+    'xargs adds arguments to it from stdin' if marker.nil? || words.any? { |w| unquote(w).include?(marker) }
   end
 
   def segments
@@ -342,6 +473,10 @@ class ShellCommand
     site = site.merge(at: site[:at] + i) if typed
     sub = args[i] && unquote(args[i])
     rest = args[(i + 1)..] || []
+    if sub&.match?(/[$`*?\[]/)
+      return [invocation(sub, rest, dir, overrides, unresolved || 'its git subcommand is only known when it runs', site)]
+    end
+
     body = sub && Git.aliases(dir: dir, overrides: overrides)[sub.downcase]
     return [invocation(sub, rest, dir, overrides, unresolved, site)] if body.nil? || ShellCommand.git_builtin?(sub)
 
@@ -402,7 +537,7 @@ class ShellCommand
 
       owner = command_word(line)
       executable = INTERPRETERS.include?(owner)
-      line.gsub(QUOTED_SPAN) { $1 ? $& : '""' }.sub(/(?:\A|[ \t])#.*/, '').scan(OPENER) do |dash, sq, dq, bare|
+      ShellCommand.heredoc_scan_text(line).scan(OPENER) do |dash, sq, dq, bare|
         hd = Heredoc.new(
           delim: sq || dq || bare,
           dash: dash == '-',

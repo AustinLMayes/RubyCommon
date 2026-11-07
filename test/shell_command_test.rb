@@ -532,6 +532,105 @@ class ShellCommandTest < Minitest::Test
     end
   end
 
+  def test_unquote_decodes_backslashes_and_ansi_strings
+    sc = ShellCommand.new('')
+    assert_equal 'push', sc.unquote('pu\\sh')
+    assert_equal 'git push origin main', sc.unquote('git\\ push\\ origin\\ main')
+    assert_equal 'git push', sc.unquote("$'git push'")
+    assert_equal "it's", sc.unquote("$'it\\'s'")
+    assert_equal 'gh', sc.unquote("$'\\x67h'")
+    assert_equal 'a b', sc.unquote("'a b'")
+  end
+
+  def test_git_invocation_decodes_an_escaped_subcommand_and_code
+    with_repo do |dir|
+      ['git pu\\sh origin main', 'git -C . pu\\sh', 'bash -c git\\ push\\ origin\\ main', "bash -c $'git push origin main'",
+       'eval git\\ push'].each do |cmd|
+        assert_equal %w[push], invocations(cmd, dir).map { |f| f[:sub] }, cmd
+      end
+    end
+  end
+
+  def test_git_invocation_refuses_a_subcommand_built_at_run_time
+    with_repo do |dir|
+      ['git $SUB origin main', 'git p?sh origin main', 'git "$(echo push)"'].each do |cmd|
+        assert_equal ['its git subcommand is only known when it runs'], invocations(cmd, dir).map { |f| f[:unresolved] }, cmd
+      end
+    end
+  end
+
+  def test_git_invocation_reads_every_env_split_string_spelling
+    with_repo do |dir|
+      ['env -i -S "git push origin main"', 'env -S"git push origin main"', 'env --split-string="git push origin main"',
+       'env FOO=1 -S "git push origin main"', 'env -iS "git push origin main"'].each do |cmd|
+        assert_equal %w[push], invocations(cmd, dir).map { |f| f[:sub] }, cmd
+      end
+    end
+  end
+
+  def test_git_invocation_runs_where_env_or_sudo_moves_it
+    with_repo do |dir|
+      Dir.mktmpdir('elsewhere') do |other|
+        real = File.realpath(dir)
+        ["env -C #{dir} git status", "env --chdir=#{dir} git status", "sudo -D #{dir} git status"].each do |cmd|
+          assert_equal [real], invocations(cmd, other).map { |f| f[:dir] }, cmd
+        end
+        assert_equal [nil], invocations('env -C "$X" git status', other).map { |f| f[:dir] }
+      end
+    end
+  end
+
+  def test_git_invocation_marks_xargs_arguments_unresolved
+    with_repo do |dir|
+      ['echo main | xargs git push origin', 'xargs -n1 git push origin < f'].each do |cmd|
+        assert_equal ['xargs adds arguments to it from stdin'], invocations(cmd, dir).map { |f| f[:unresolved] }, cmd
+      end
+      assert_equal ['xargs adds arguments to it from stdin'], invocations('xargs -I{} git push origin {}', dir).map { |f| f[:unresolved] }
+      assert_equal [nil], invocations('xargs -I{} git push origin main', dir).map { |f| f[:unresolved] }
+    end
+  end
+
+  def test_git_invocation_forgets_the_dir_after_an_eval_that_moves
+    with_repo do |dir|
+      Dir.mktmpdir('elsewhere') do |other|
+        assert_equal [nil], invocations(%(eval "cd #{dir}"; git status), other).map { |f| f[:dir] }
+        assert_equal [nil], invocations("eval cd #{dir} && git status", other).map { |f| f[:dir] }
+      end
+    end
+  end
+
+  def test_git_invocation_pops_a_subshell_whose_last_word_is_quoted_or_substituted
+    with_repo do |dir|
+      Dir.mktmpdir('elsewhere') do |other|
+        [%((cd #{dir} && echo "wip"); git status), %((cd #{dir} && echo $(pwd)); git status), %((cd #{dir}; echo 'a') && git status),
+         "true | cd #{dir}; git status"].each_with_index do |cmd, i|
+          assert_equal [i == 3 ? nil : other], invocations(cmd, other).map { |f| f[:dir] }, cmd
+        end
+      end
+    end
+  end
+
+  def test_git_invocation_reads_the_attr_source_value_and_csh_fish
+    with_repo do |dir|
+      assert_equal %w[push], invocations('git --attr-source HEAD push origin main', dir).map { |f| f[:sub] }
+      assert_equal %w[push push], invocations(%(csh -c "git push" ; fish -c "git push"), dir).map { |f| f[:sub] }
+      assert_equal %w[push], invocations("gi\\\nt push", dir).map { |f| f[:sub] }
+      assert_includes invocations(%(eval 'x=$(git push)'), dir, substitutions: true).map { |f| f[:sub] }, 'push'
+      assert_equal %w[push], invocations('sudo -u x git push', dir).map { |f| f[:sub] }
+    end
+  end
+
+  def test_a_heredoc_scan_reads_quotes_arithmetic_and_comments_the_way_the_shell_does
+    ["true;# <<EOF", 'echo $((1<<2))', 'x=$((a <<b))', '(( a<<1 ))', 'echo $[1<<2]'].each do |line|
+      cmd = ShellCommand.new("#{line}\ngit push origin main\nEOF")
+      assert_empty cmd.heredocs, line
+      assert_includes cmd.commands, %w[git push origin main], line
+    end
+    ['git commit -m "$(cat <<"EOF"', "git commit -m \"it's $(cat <<'EOF'"].each do |line|
+      assert_equal ['EOF'], ShellCommand.new("#{line}\nFix it\nEOF\n)\"").heredocs.map(&:delim), line
+    end
+  end
+
   def test_git_invocation_without_a_subcommand_or_without_git
     with_repo do |dir|
       assert_equal [nil], invocations('git --version', dir).map { |f| f[:sub] }
