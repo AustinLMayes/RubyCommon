@@ -101,7 +101,7 @@ class ShellCommand
         stop = text.index(/(?<!\\)`/, i + 1) || text.length
         found << text[(i + 1)...stop]
         i = stop
-      elsif text[i, 2].match?(/\A[$<>]\(/)
+      elsif text[i, 2].match?(/\A[$<>]\(/) || (text[i, 2] == '=(' && (i.zero? || text[i - 1].match?(/\s/)))
         stop = closing_paren(text, i + 2)
         found << text[(i + 2)...stop]
         i = stop
@@ -636,8 +636,8 @@ class ShellCommand
             buf << @s[@i]
             @i += 1
           end
-        when '$', '<', '>'
-          if @s[@i + 1] == '('
+        when '$', '<', '>', '='
+          if @s[@i + 1] == '(' && (c != '=' || buf.empty?)
             buf << read_subshell
           elsif c == '$' && @s[@i + 1] == "'"
             buf << read_ansi
