@@ -80,7 +80,14 @@ module HookIO
   end
 
   def self.unattended?
-    ENV['AX_ATTENDED'] == '0'
+    return ENV['AX_ATTENDED'] == '0' if ENV.key?('AX_ATTENDED')
+
+    job = ENV['CLAUDE_JOB_DIR'].to_s
+    return false if job.empty?
+
+    Array(JSON.parse(File.read(File.join(job, 'state.json')))['respawnFlags']).include?('--disallowed-tools')
+  rescue SystemCallError, JSON::ParserError
+    false
   end
 
   def self.sep(text)

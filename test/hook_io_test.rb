@@ -174,6 +174,15 @@ class HookIOContractTest < Minitest::Test
     assert_equal [0, 'false', ''], hook('print HookIO.unattended?', env: { 'CLAUDE_JOB_DIR' => nil, 'AX_ATTENDED' => nil })
   end
 
+  def test_a_job_ax_launched_before_ax_attended_zero_reads_its_respawn_flags
+    Dir.mktmpdir do |job|
+      File.write(File.join(job, 'state.json'), JSON.generate('respawnFlags' => ['--disallowed-tools', 'x']))
+      assert_equal [0, 'true', ''], hook('print HookIO.unattended?', env: { 'CLAUDE_JOB_DIR' => job, 'AX_ATTENDED' => nil })
+      File.write(File.join(job, 'state.json'), JSON.generate('respawnFlags' => ['--model', 'opus']))
+      assert_equal [0, 'false', ''], hook('print HookIO.unattended?', env: { 'CLAUDE_JOB_DIR' => job, 'AX_ATTENDED' => nil })
+    end
+  end
+
   def test_an_attended_job_is_not_unattended
     assert_equal [0, 'false', ''],
                  hook('print HookIO.unattended?', env: { 'CLAUDE_JOB_DIR' => '/j', 'AX_ATTENDED' => '1' })
