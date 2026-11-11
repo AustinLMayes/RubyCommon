@@ -168,10 +168,10 @@ class HookIOContractTest < Minitest::Test
     assert_equal Dir.pwd, HookIO.cwd({})
   end
 
-  def test_unattended_reads_a_non_empty_job_dir
-    assert_equal [0, 'true', ''], hook('print HookIO.unattended?', env: { 'CLAUDE_JOB_DIR' => '/j' })
-    assert_equal [0, 'false', ''], hook('print HookIO.unattended?', env: { 'CLAUDE_JOB_DIR' => '' })
-    assert_equal [0, 'false', ''], hook('print HookIO.unattended?', env: { 'CLAUDE_JOB_DIR' => nil })
+  def test_unattended_is_only_what_ax_said
+    assert_equal [0, 'true', ''], hook('print HookIO.unattended?', env: { 'CLAUDE_JOB_DIR' => '/j', 'AX_ATTENDED' => '0' })
+    assert_equal [0, 'false', ''], hook('print HookIO.unattended?', env: { 'CLAUDE_JOB_DIR' => '/j', 'AX_ATTENDED' => nil })
+    assert_equal [0, 'false', ''], hook('print HookIO.unattended?', env: { 'CLAUDE_JOB_DIR' => nil, 'AX_ATTENDED' => nil })
   end
 
   def test_an_attended_job_is_not_unattended
