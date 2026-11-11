@@ -180,6 +180,8 @@ class HookIOContractTest < Minitest::Test
       assert_equal [0, 'true', ''], hook('print HookIO.unattended?', env: { 'CLAUDE_JOB_DIR' => job, 'AX_ATTENDED' => nil })
       File.write(File.join(job, 'state.json'), JSON.generate('respawnFlags' => ['--model', 'opus']))
       assert_equal [0, 'false', ''], hook('print HookIO.unattended?', env: { 'CLAUDE_JOB_DIR' => job, 'AX_ATTENDED' => nil })
+      File.write(File.join(job, 'state.json'), '[]')
+      assert_equal [0, 'false', ''], hook('print HookIO.unattended?', env: { 'CLAUDE_JOB_DIR' => job, 'AX_ATTENDED' => nil })
     end
   end
 

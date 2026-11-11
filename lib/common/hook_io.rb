@@ -86,7 +86,7 @@ module HookIO
     return false if job.empty?
 
     Array(JSON.parse(File.read(File.join(job, 'state.json')))['respawnFlags']).include?('--disallowed-tools')
-  rescue SystemCallError, JSON::ParserError
+  rescue StandardError
     false
   end
 
