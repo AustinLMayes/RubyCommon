@@ -396,6 +396,18 @@ class ShellCommandTest < Minitest::Test
     assert_equal ['unclosed'], ShellCommand.substitutions('$(unclosed')
   end
 
+  def test_zsh_equals_substitution_after_a_separator_but_not_an_array
+    assert_equal %w[a b c d e], ShellCommand.substitutions('cat =(a); x;=(b)|=(c)&&=(d) (=(e))')
+    assert_empty ShellCommand.substitutions('a=(1 2) b+=(3) c[1]=(4)')
+  end
+
+  def test_a_glued_redirect_ends_the_word
+    assert_equal [%w[gh pr create >/dev/null]], ShellCommand.new('gh pr create>/dev/null').commands
+    assert_equal [%w[git push <<<x]], ShellCommand.new('git push<<<x').commands
+    assert_equal [%w[echo 2>/dev/null]], ShellCommand.new('echo 2>/dev/null').commands
+    assert_equal [%w[diff <(a)]], ShellCommand.new('diff <(a)').commands
+  end
+
   def test_git_invocation_reads_through_eval_and_exec
     with_repo do |dir|
       assert_equal %w[push], invocations("eval 'git push origin production'", dir).map { |f| f[:sub] }
@@ -587,6 +599,36 @@ class ShellCommandTest < Minitest::Test
       end
       assert_equal ['xargs adds arguments to it from stdin'], invocations('xargs -I{} git push origin {}', dir).map { |f| f[:unresolved] }
       assert_equal [nil], invocations('xargs -I{} git push origin main', dir).map { |f| f[:unresolved] }
+      ['echo push | gxargs git', 'parallel git push origin ::: main', 'parallel git push origin main', 'xargs -i git {}'].each do |cmd|
+        assert_equal ['xargs adds arguments to it from stdin'], invocations(cmd, dir).map { |f| f[:unresolved] }, cmd
+      end
+    end
+  end
+
+  def test_xargs_marker_reads_every_replace_spelling
+    assert_equal 'X', ShellCommand.xargs_marker(%w[-n1 -I X])
+    assert_equal '%', ShellCommand.xargs_marker(%w[-J%])
+    assert_equal '{}', ShellCommand.xargs_marker(%w[-i])
+    assert_equal 'R', ShellCommand.xargs_marker(%w[--replace=R])
+    assert_equal '{', ShellCommand.xargs_marker(%w[-j4], parallel: true)
+    assert_nil ShellCommand.xargs_marker(%w[-n1])
+  end
+
+  def test_a_precommand_before_a_subshell_still_names_the_command
+    with_repo do |dir|
+      ['time (git push origin HEAD)', 'coproc (git push origin HEAD)', 'nocorrect git push origin HEAD'].each do |cmd|
+        assert_equal ['push'], invocations(cmd, dir).map { |f| f[:sub] }, cmd
+      end
+    end
+    assert_equal 'gh', ShellCommand.command_name('({gh')
+  end
+
+  def test_a_globbed_cd_leaves_the_dir_unknown
+    with_repo do |dir|
+      ['cd /tm? && git status', 'cd {/tmp,/x} && git status'].each do |cmd|
+        assert_equal [nil], invocations(cmd, dir).map { |f| f[:dir] }, cmd
+      end
+      assert_equal [File.realpath('/tmp')], invocations("cd '/tmp' && git status", dir).map { |f| f[:dir] }
     end
   end
 

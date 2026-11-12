@@ -21,13 +21,17 @@ class ShellCommand
   GIT_WORDS = %w[git g].freeze
 
   ENV_ASSIGN = /\A\w+=/.freeze
-  WRAPPERS = %w[env sudo doas nohup timeout command stdbuf nice ionice time noglob xargs exec caffeinate builtin].freeze
+  XARGS = %w[xargs gxargs parallel].freeze
+  WRAPPERS = (%w[env sudo doas nohup timeout command stdbuf nice ionice time noglob exec caffeinate builtin coproc nocorrect] +
+              XARGS).freeze
   WRAPPER_VALUE_FLAGS = {
     'env' => %w[-u --unset -C --chdir -P], 'timeout' => %w[-s --signal -k --kill-after],
     'sudo' => %w[-u -g -C -h -p -U -r -t -D], 'doas' => %w[-u -C], 'exec' => %w[-a], 'nice' => %w[-n],
     'ionice' => %w[-c -n -p], 'stdbuf' => %w[-i -o -e], 'xargs' => %w[-I -n -P -L -d -s -E -J -R -S],
+    'gxargs' => %w[-I -n -P -L -d -s -E -a --arg-file], 'parallel' => %w[-I -j -P -n -N -d -E -S -a --jobs --sshlogin],
     'caffeinate' => %w[-t -w]
   }.freeze
+  GLOB = /[*?\[]|\{[^{}]*(?:,|\.\.)[^{}]*\}/.freeze
   DURATION = /\A\d+(\.\d+)?[smhd]?\z/.freeze
   KEYWORDS = %w[if then elif else do while until !].freeze
   SHELLS = %w[bash sh zsh ksh dash csh tcsh fish].freeze
@@ -59,7 +63,16 @@ class ShellCommand
   end
 
   def self.command_name(tok)
-    basename(tok.to_s.delete('\\').delete_prefix('='))
+    basename(tok.to_s.delete('\\').delete_prefix('=').sub(/\A[({]+/, ''))
+  end
+
+  def self.xargs_marker(flags, parallel: false)
+    i = flags.index { |t| %w[-I -J].include?(t) }
+    return flags[i + 1] if i
+    return '{}' if flags.any? { |t| %w[-i --replace].include?(t) }
+
+    found = flags.find { |t| t.match?(/\A-[IJi].|\A--replace=/) }&.sub(/\A-[IJi]|\A--replace=/, '')
+    found || ('{' if parallel)
   end
 
   def self.strip_prefix(tokens, flags: true)
@@ -101,7 +114,7 @@ class ShellCommand
         stop = text.index(/(?<!\\)`/, i + 1) || text.length
         found << text[(i + 1)...stop]
         i = stop
-      elsif text[i, 2].match?(/\A[$<>]\(/) || (text[i, 2] == '=(' && (i.zero? || text[i - 1].match?(/\s/)))
+      elsif text[i, 2].match?(/\A[$<>]\(/) || (text[i, 2] == '=(' && (i.zero? || !text[i - 1].match?(/[\w\]+]/)))
         stop = closing_paren(text, i + 2)
         found << text[(i + 2)...stop]
         i = stop
@@ -361,7 +374,7 @@ class ShellCommand
       closes = ShellCommand.trailing_closes(raw_tokens.last)
       nested = subs ? substituted(raw_tokens.join(' '), raw_tokens, dir, hops: hops, walk: walk, depth: depth, &other) : []
       toks = raw_tokens.dup
-      toks[0] = toks[0].sub(/\A[({]+/, '')
+      toks[0] = toks[0].sub(/\A(?:\(|\{(?![^{}\s]*(?:,|\.\.)[^{}\s]*\}))+/, '')
       toks[-1] = toks[-1][0, toks[-1].length - closes] if closes.positive?
       toks[-1] = '' if toks[-1].match?(/\A\}+\z/)
       toks = toks.reject(&:empty?).drop_while { |t| KEYWORDS.include?(t) }
@@ -418,13 +431,12 @@ class ShellCommand
   end
 
   def xargs_fed(prefix, words)
-    at = prefix.index { |t| ShellCommand.command_name(unquote(t)) == 'xargs' }
+    at = prefix.index { |t| XARGS.include?(ShellCommand.command_name(unquote(t))) }
     return unless at
 
-    flags = prefix[(at + 1)..].map { |t| unquote(t) }
-    i = flags.index { |t| %w[-I -J].include?(t) }
-    marker = i ? flags[i + 1] : flags.find { |t| t.match?(/\A-[IJ]./) }&.[](2..)
-    'xargs adds arguments to it from stdin' if marker.nil? || words.any? { |w| unquote(w).include?(marker) }
+    parallel = ShellCommand.command_name(unquote(prefix[at])) == 'parallel'
+    marker = ShellCommand.xargs_marker(prefix[(at + 1)..].map { |t| unquote(t) }, parallel: parallel)
+    'xargs adds arguments to it from stdin' if parallel || marker.nil? || words.any? { |w| unquote(w).include?(marker) }
   end
 
   def segments
@@ -511,9 +523,10 @@ class ShellCommand
   end
 
   def cd_target(words, dir, walk)
-    target = words[1..].map { |t| unquote(t) }.reject { |t| %w[-P -L -e -@].include?(t) }.first
+    raw = words[1..].reject { |t| %w[-P -L -e -@].include?(unquote(t)) }.first
+    target = raw && unquote(raw)
     return Dir.home if target.nil?
-    return nil if dir.nil? || target == '-'
+    return nil if dir.nil? || target == '-' || raw.gsub(/'[^']*'|"(?:\\.|[^"\\])*"/, '').match?(GLOB)
 
     Paths.canonical(target, base: dir, walk: walk)
   end
@@ -620,6 +633,7 @@ class ShellCommand
       while @i < @s.length
         c = @s[@i]
         break if [' ', "\t", ';', '|', '&', "\n"].include?(c)
+        break if ['<', '>'].include?(c) && @s[@i + 1] != '(' && !buf.match?(/\A\d*[<>]*\z/)
 
         case c
         when "'" then buf << read_single
@@ -637,7 +651,7 @@ class ShellCommand
             @i += 1
           end
         when '$', '<', '>', '='
-          if @s[@i + 1] == '(' && (c != '=' || buf.empty?)
+          if @s[@i + 1] == '(' && (c != '=' || buf.match?(/\A[({]*\z/))
             buf << read_subshell
           elsif c == '$' && @s[@i + 1] == "'"
             buf << read_ansi
