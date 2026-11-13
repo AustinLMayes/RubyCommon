@@ -102,6 +102,7 @@ module GitHub
       number title body state isDraft baseRefName headRefName headRefOid baseRefOid
       mergeStateStatus reviewDecision mergedAt url
       mergeCommit { oid }
+      labels(first: 20) { nodes { name } }
       stack { number }
       reviewRequests(first: 20) { nodes { requestedReviewer {
         __typename ... on User { login } ... on Team { slug } ... on Bot { login } } } }

@@ -74,9 +74,20 @@ module Reviewers
     }.freeze,
   }.freeze
 
+  # ClaudeAsAgentK reviews when one of these labels lands on the PR, never on a review request,
+  # and takes the label back off once it has reviewed.
+  AGENT_LOGIN = "ClaudeAsAgentK"
+  AGENT_LABELS = {
+    "agent"         => "Agentic Review Request",
+    "agent-approve" => "Agentic Review Request and Approve",
+  }.freeze
+  LABEL_PREFIX = "label:"
+
   # Raises UnknownHandle on no match so typos surface at the call site
   # instead of going to GitHub as a non-existent reviewer.
   def expand(handle, org:)
+    return "#{LABEL_PREFIX}#{AGENT_LABELS[handle]}" if AGENT_LABELS.key?(handle)
+    return handle if AGENT_LABELS.values.include?(label_name(handle))
     return "#{org}/#{TEAMS[org][handle]}" if TEAMS.dig(org, handle)
     return USERS[org][handle] if USERS.dig(org, handle)
     return handle if USERS[org]&.values&.include?(handle)
@@ -89,6 +100,10 @@ module Reviewers
 
   def expand_all(handles, org:)
     handles.map { |h| expand(h, org: org) }
+  end
+
+  def label_name(expanded)
+    expanded.delete_prefix(LABEL_PREFIX) if expanded.start_with?(LABEL_PREFIX)
   end
 
   # Prints suggested hash literals after refreshing teams/members from gh.
