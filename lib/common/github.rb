@@ -107,7 +107,7 @@ module GitHub
       reviewRequests(first: 20) { nodes { requestedReviewer {
         __typename ... on User { login } ... on Team { slug } ... on Bot { login } } } }
       reviews(last: 50) { nodes { state submittedAt author { __typename login } } }
-      reviewThreads(first: 100) { nodes { id isResolved } }
+      reviewThreads(first: 100) { nodes { id isResolved comments(first: 1) { nodes { body } } } }
       commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
     GQL
 
