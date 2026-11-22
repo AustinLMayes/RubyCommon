@@ -722,4 +722,37 @@ def test_git_invocation_says_whether_a_shell_got_in_between
     assert_equal [true, true], invocations('git del austin/x', dir).map { |i| i[:nested] }
   end
 end
+
+def test_a_literal_assignment_moves_git_dash_c_and_cd
+  with_repo do |dir|
+    real = File.realpath(dir)
+    ["W=#{dir}; git -C $W merge origin/master", "W='#{dir}'; git -C \"${W}\" merge origin/master",
+     "W=#{dir}\ncd $W && git merge origin/master", "W=/nope; W=#{dir}; git -C $W merge origin/master"].each do |cmd|
+      assert_equal [real], invocations(cmd, Dir.home).map { |i| i[:dir] }, cmd
+    end
+  end
+end
+
+def test_a_variable_the_command_cannot_vouch_for_stays_unknown
+  with_repo do |dir|
+    real = File.realpath(dir)
+    ["W=$(pwd); git -C $W merge x", "W=#{dir}; W=$X; git -C $W merge x", "W=#{dir}; W=`pwd`; git -C $W merge x",
+     'git -C $W merge x', 'git -C $HOME merge x', "W=#{dir} git -C $W merge x",
+     "(W=#{dir}); git -C $W merge x", "(W=#{dir}; git -C $W merge x)", "{ W=#{dir}; } | cat; git -C $W merge x",
+     "true && W=#{dir}; git -C $W merge x", "W=#{dir} || true; git -C $W merge x", "W=#{dir} & git -C $W merge x",
+     "if true; then W=#{dir}; fi; git -C $W merge x", "while false; do W=#{dir}; done; git -C $W merge x",
+     "for W in #{dir}; do git -C $W merge x; done", "W=#{dir}; for W in /a; do :; done; git -C $W merge x",
+     "W=#{dir}; read W; git -C $W merge x", "W=#{dir}; eval 'W=/a'; git -C $W merge x",
+     "f() { W=/a; }; W=#{dir}; f; git -C $W merge x", "W=#{dir}/*; git -C $W merge x", "W=~; git -C $W merge x",
+     "W=#{dir}; git -C $W[1] merge x", "W=#{dir}; git -C $W:h merge x", "W=#{dir}; git -C '$W' merge x",
+     "PWD=#{dir}; git -C $PWD merge x"].each do |cmd|
+      refute_includes invocations(cmd, Dir.home).map { |i| i[:dir] }, real, cmd
+    end
+  end
+end
+
+def test_an_ampersand_after_a_redirect_is_not_a_separator
+  assert_equal [['git', 'merge', 'x', '2>&1'], %w[tail -5], ['echo', '>&2'], ['cat', '<&3']],
+               ShellCommand.new('git merge x 2>&1 | tail -5; echo >&2; cat <&3').commands
+end
 end

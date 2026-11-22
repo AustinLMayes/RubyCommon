@@ -39,6 +39,14 @@ class ShellCommand
   ANSI_ESCAPES = { 'n' => "\n", 't' => "\t", 'r' => "\r", 'e' => "\e", 'a' => "\a", 'b' => "\b", 'f' => "\f", 'v' => "\v" }.freeze
   INLINE_CODE_FLAG = /\A-{1,2}(c|e|E|eval|command)\z/.freeze
   SHELL_CODE_FLAG = /\A-[a-zA-Z]*c[a-zA-Z]*\z/.freeze
+  NEST_OPEN = %w[if while until for case select].freeze
+  NEST_CLOSE = %w[fi done esac].freeze
+  GROUP_OPEN = /\A(?:\(|\{(?![^{}\s]*(?:,|\.\.)[^{}\s]*\}))+/.freeze
+  VAR_ASSIGN = /\A(?<name>[A-Za-z_]\w*)=(?<value>.*)\z/m.freeze
+  VAR_REF = /\A\$(?:\{(?<braced>[A-Za-z_]\w*)\}|(?<bare>[A-Za-z_]\w*)(?![\w\[:]))/.freeze
+  SPECIAL_VARS = %w[PWD OLDPWD RANDOM SRANDOM SECONDS EPOCHSECONDS EPOCHREALTIME LINENO HISTCMD BASHPID PPID
+                    status pipestatus argv ERRNO ZSH_SUBSHELL ZSH_ARGZERO TTYIDLE].freeze
+  SOURCING = %w[eval source . exec].freeze
 
   GIT_OPTIONS = {
     '-C' => :dir, '-c' => :override, '--exec-path' => :value, '--config-env' => :value, '--super-prefix' => :value,
@@ -366,12 +374,20 @@ class ShellCommand
     start = dir
     subshells = []
     pushed = []
+    vars = {}
+    nest = 0
+    tracking = tokens.none? { |t| t == 'function' || t.end_with?('()') }
     found = segments.flat_map do |all_tokens, before, after|
       raw_tokens = all_tokens.take_while { |t| t != '#' }
       next [] if raw_tokens.empty?
 
       raw_tokens.first[/\A[({]*/].count('(').times { subshells << dir }
+      opened = raw_tokens.first[GROUP_OPEN]
       closes = ShellCommand.trailing_closes(raw_tokens.last)
+      grouped = nest.positive? || subshells.any? || opened || closes.positive? || KEYWORDS.include?(raw_tokens.first)
+      nest = [nest + nesting(raw_tokens), 0].max
+      known = vars.dup
+      track_vars(vars, raw_tokens, tracking && !grouped && [nil, ';', "\n"].include?(before) && [nil, ';', "\n"].include?(after))
       nested = subs ? substituted(raw_tokens.join(' '), raw_tokens, dir, hops: hops, walk: walk, depth: depth, &other) : []
       toks = raw_tokens.dup
       toks[0] = toks[0].sub(/\A(?:\(|\{(?![^{}\s]*(?:,|\.\.)[^{}\s]*\}))+/, '')
@@ -393,7 +409,7 @@ class ShellCommand
       unsure = %w[| &].include?(after) || %w[| ||].include?(before) || (before == '&&' && after != '&&')
       result = nested + if %w[cd pushd popd].include?(name)
                  pushed << dir if name == 'pushd'
-                 target = name == 'popd' ? pushed.pop : cd_target(words, dir, walk)
+                 target = name == 'popd' ? pushed.pop : cd_target(words, dir, walk, known)
                  dir = unsure ? nil : target
                  []
                elsif (name == 'eval' || code) && depth >= hops
@@ -404,7 +420,7 @@ class ShellCommand
                  unresolved ||= xargs_fed(toks[0, toks.length - words.length], words)
                  site = { segment: toks, cwd: here, at: toks.length - words.length + 1, nested: depth.positive? }
                  resolve_git(words[1..], here, [], unresolved, hops: hops, walk: walk, depth: depth, site: site, typed: true,
-                                                               subs: subs, &other)
+                                                               subs: subs, vars: known, &other)
                elsif name == 'eval'
                  inner = ShellCommand.new(words[1..].map { |t| unquote(t) }.join(' '))
                  found_inner = inner.walk_git(here, hops: hops, walk: walk, depth: depth + 1, subs: subs, &other)
@@ -466,7 +482,7 @@ class ShellCommand
     end
   end
 
-  def resolve_git(args, dir, overrides, unresolved, hops:, walk:, depth:, site:, typed: false, subs: false, &other)
+  def resolve_git(args, dir, overrides, unresolved, hops:, walk:, depth:, site:, typed: false, subs: false, vars: {}, &other)
     i = 0
     while i < args.length
       tok = unquote(args[i])
@@ -476,7 +492,7 @@ class ShellCommand
 
       value = inline || unquote(args[i + 1])
       case kind
-      when :dir then dir = dir && Paths.canonical(value, base: dir, walk: walk)
+      when :dir then dir = dir && Paths.canonical(inline || unquote(expand(args[i + 1], vars)), base: dir, walk: walk)
       when :override then overrides += [value]
       when :mover then unresolved ||= "`git #{tok}` moves the repository this guard would read"
       end
@@ -522,8 +538,71 @@ class ShellCommand
                       segment: segment, cwd: dir, nested: true)
   end
 
-  def cd_target(words, dir, walk)
-    raw = words[1..].reject { |t| %w[-P -L -e -@].include?(unquote(t)) }.first
+  def track_vars(vars, raw_tokens, trusted)
+    words = raw_tokens.map { |t| t.sub(/\A[({]+/, '').sub(/[)}]+\z/, '') }.reject(&:empty?)
+    assigns = words.map { |w| w.match(VAR_ASSIGN) }
+    if trusted && assigns.any? && assigns.all?
+      assigns.each do |m|
+        value = literal(m[:value]) unless SPECIAL_VARS.include?(m[:name])
+        value ? vars[m[:name]] = value : vars.delete(m[:name])
+      end
+      return
+    end
+    return vars.clear if SOURCING.include?(ShellCommand.command_name(unquote(ShellCommand.strip_prefix(words).first.to_s)))
+
+    vars.delete_if { |name, _| raw_tokens.any? { |t| t.match?(/(?<![$\w{])#{name}(?!\w)/) } }
+  end
+
+  def literal(raw)
+    return if raw.match?(/[$`]/)
+
+    value = unquote(raw)
+    value unless value.empty? || value.start_with?('=') || value.match?(/[\s'"\\*?\[\]{}~]/)
+  end
+
+  def expand(raw, vars)
+    return raw if raw.nil? || vars.empty? || !raw.include?('$')
+
+    out = +''
+    single = double = false
+    i = 0
+    while i < raw.length
+      c = raw[i]
+      if single then single = c != "'"
+      elsif c == "'" && !double then single = true
+      elsif c == '\\'
+        out << raw[i, 2]
+        i += 2
+        next
+      elsif c == '"' then double = !double
+      elsif c == '$' && (m = raw[i..].match(VAR_REF)) && vars.key?(name = m[:braced] || m[:bare])
+        out << vars[name]
+        i += m[0].length
+        next
+      end
+      out << c
+      i += 1
+    end
+    out
+  end
+
+  def nesting(raw_tokens)
+    delta = 0
+    raw_tokens.each do |t|
+      lead = t[GROUP_OPEN].to_s
+      word = t.delete_prefix(lead).sub(/\)+\z/, '')
+      delta += lead.count('{')
+      if NEST_OPEN.include?(word) then delta += 1
+      elsif NEST_CLOSE.include?(word) then delta -= 1
+      elsif word.match?(/\A\}+\z/) then delta -= word.length
+      elsif !word.empty? && !KEYWORDS.include?(word) then break
+      end
+    end
+    delta
+  end
+
+  def cd_target(words, dir, walk, vars = {})
+    raw = expand(words[1..].reject { |t| %w[-P -L -e -@].include?(unquote(t)) }.first, vars)
     target = raw && unquote(raw)
     return Dir.home if target.nil?
     return nil if dir.nil? || target == '-' || raw.gsub(/'[^']*'|"(?:\\.|[^"\\])*"/, '').match?(GLOB)
@@ -632,7 +711,7 @@ class ShellCommand
       buf = +''
       while @i < @s.length
         c = @s[@i]
-        break if [' ', "\t", ';', '|', '&', "\n"].include?(c)
+        break if [' ', "\t", ';', '|', '&', "\n"].include?(c) && !(c == '&' && buf.match?(/\A\d*[<>]+\z/))
         break if ['<', '>'].include?(c) && @s[@i + 1] != '(' && !buf.match?(/\A\d*[<>]*\z/)
 
         case c
