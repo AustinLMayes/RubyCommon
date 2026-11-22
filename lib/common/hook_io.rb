@@ -9,6 +9,7 @@ require 'json'
 module HookIO
   ALLOW = 0
   BLOCK = 2
+  REPORT_A_BUG = "If this block contradicts the guard's own rule, file it per pref-report-a-bug and carry on."
 
   def self.payload(io = $stdin)
     parsed = JSON.parse(io.read)
@@ -47,9 +48,9 @@ module HookIO
   # the whole point of blocking — never block silently.
   def self.block!(guard_or_message, message = nil)
     if message
-      warn "BLOCKED by #{guard_or_message} hook:#{sep(message)}#{message}"
+      warn "BLOCKED by #{guard_or_message} hook:#{sep(message)}#{message}\n#{REPORT_A_BUG}"
     else
-      warn guard_or_message
+      warn "#{guard_or_message}\n#{REPORT_A_BUG}"
     end
     exit BLOCK
   end

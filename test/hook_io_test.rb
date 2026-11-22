@@ -53,6 +53,8 @@ class HookIOTest < Minitest::Test
 end
 
 class HookIOContractTest < Minitest::Test
+  POINTER = "If this block contradicts the guard's own rule, file it per pref-report-a-bug and carry on.\n"
+
   LIB = File.expand_path('../lib', __dir__)
 
   def hook(code, stdin: '', env: {})
@@ -83,15 +85,15 @@ class HookIOContractTest < Minitest::Test
   end
 
   def test_one_argument_block_prints_the_message_as_is
-    assert_equal [2, '', "raw text\n"], hook('HookIO.block!("raw text")')
+    assert_equal [2, '', "raw text\n" + POINTER], hook('HookIO.block!("raw text")')
   end
 
   def test_block_names_the_guard
-    assert_equal [2, '', "BLOCKED by g hook: no.\n"], hook('HookIO.block!("g", "no.")')
+    assert_equal [2, '', "BLOCKED by g hook: no.\n" + POINTER], hook('HookIO.block!("g", "no.")')
   end
 
   def test_block_with_a_leading_newline_keeps_the_header_bare
-    assert_equal [2, '', "BLOCKED by g hook:\n\n  • a\n"], hook('HookIO.block!("g", "\n\n  • a")')
+    assert_equal [2, '', "BLOCKED by g hook:\n\n  • a\n" + POINTER], hook('HookIO.block!("g", "\n\n  • a")')
   end
 
   def test_warn_is_a_system_message
@@ -121,7 +123,7 @@ class HookIOContractTest < Minitest::Test
   end
 
   def test_fail_closed_blocks
-    assert_equal [2, '', "BLOCKED by g hook: boom\n"], hook('HookIO.fail_closed!("g", "boom")')
+    assert_equal [2, '', "BLOCKED by g hook: boom\n" + POINTER], hook('HookIO.fail_closed!("g", "boom")')
   end
 
   def test_guard_yields_the_payload_and_passes_when_the_block_returns
@@ -130,7 +132,7 @@ class HookIOContractTest < Minitest::Test
   end
 
   def test_guard_lets_an_exit_inside_the_block_through
-    assert_equal [2, '', "BLOCKED by g hook: x\n"], hook('HookIO.guard("g") { HookIO.block!("g", "x") }', stdin: '{}')
+    assert_equal [2, '', "BLOCKED by g hook: x\n" + POINTER], hook('HookIO.guard("g") { HookIO.block!("g", "x") }', stdin: '{}')
   end
 
   def test_guard_fails_open_on_a_bad_payload
@@ -142,7 +144,7 @@ class HookIOContractTest < Minitest::Test
   def test_guard_fails_closed_on_a_bad_payload
     rc, _, err = hook('HookIO.guard("g", on_error: :closed) { raise "unreached" }', stdin: 'nope')
     assert_equal 2, rc
-    assert_equal "BLOCKED by g hook: the tool payload did not parse as JSON\n", err
+    assert_equal "BLOCKED by g hook: the tool payload did not parse as JSON\n" + POINTER, err
   end
 
   def test_guard_fails_open_on_a_crash
